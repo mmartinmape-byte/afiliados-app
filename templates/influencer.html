@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Mis comisiones — Cleantech</title>
+<style>
+:root{--verde:#0e9f6e;--verde-dk:#046c4e;--g50:#f9fafb;--g200:#e5e7eb;--g400:#9ca3af;--g600:#4b5563;--g900:#111827;--sh:0 1px 3px rgba(0,0,0,.08)}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:system-ui,-apple-system,sans-serif;background:var(--g50);color:var(--g900)}
+header{background:linear-gradient(135deg,var(--verde-dk),var(--verde));color:#fff;padding:1.6rem 1.2rem;text-align:center}
+header h1{font-size:1.2rem;margin-bottom:.2rem}
+main{max-width:640px;margin:0 auto;padding:1.2rem}
+.card{background:#fff;border-radius:14px;box-shadow:var(--sh);padding:1.2rem;margin-bottom:1rem}
+.big{font-size:2rem;font-weight:700;color:var(--verde-dk)}
+h2{font-size:.95rem;margin-bottom:.8rem;color:var(--verde-dk)}
+table{width:100%;border-collapse:collapse;font-size:.83rem}
+th{text-align:left;padding:.4rem .5rem;font-size:.66rem;text-transform:uppercase;letter-spacing:.5px;color:var(--g400);border-bottom:1px solid var(--g200)}
+td{padding:.5rem;border-bottom:1px solid var(--g200);color:var(--g600)}
+tr:last-child td{border-bottom:none}
+.badge{padding:2px 8px;border-radius:20px;font-size:.7rem;font-weight:600}
+.b-ok{background:#d1fae5;color:#065f46}
+.b-warn{background:#fef3c7;color:#92400e}
+.mono{font-family:ui-monospace,monospace;font-size:.78rem;word-break:break-all}
+.copiar{background:var(--verde);color:#fff;border:none;border-radius:8px;padding:.45rem .8rem;font-size:.8rem;cursor:pointer;font-family:inherit}
+small{color:var(--g400)}
+.fila{display:flex;justify-content:space-between;align-items:center;gap:.6rem;flex-wrap:wrap}
+</style>
+</head>
+<body>
+<header>
+  <h1>Hola, {{ inf.nombre }} 👋</h1>
+  <div style="opacity:.85;font-size:.85rem">Tu panel de afiliado de Cleantech</div>
+</header>
+<main>
+
+<div class="card" style="text-align:center">
+  <small>COMISIONES PENDIENTES DE PAGO</small>
+  <div class="big">${{ '{:,.0f}'.format(pendiente).replace(',', '.') }}</div>
+  <small>Comisión del {{ inf.comision_pct|int }}% sobre cada venta</small>
+</div>
+
+<div class="card">
+  <h2>Tus herramientas para vender</h2>
+  <div class="fila" style="margin-bottom:.7rem">
+    <div>
+      <small>TU LINK</small><br/>
+      <span class="mono" id="link">{{ link }}</span>
+    </div>
+    <button class="copiar" onclick="copiar('link')">Copiar</button>
+  </div>
+  {% if inf.cupon_codigo %}
+  <div class="fila">
+    <div>
+      <small>TU CUPÓN ({{ inf.descuento_pct|int }}% OFF para tus seguidores)</small><br/>
+      <span class="mono" id="cupon" style="font-size:1.05rem;font-weight:700">{{ inf.cupon_codigo }}</span>
+    </div>
+    <button class="copiar" onclick="copiar('cupon')">Copiar</button>
+  </div>
+  {% endif %}
+  <br/><small>Compartí el link en tus historias o bio. Toda compra que entre por tu link o use tu cupón te suma comisión automáticamente.</small>
+</div>
+
+<div class="card">
+  <h2>Tus ventas</h2>
+  {% if ventas %}
+  <table>
+    <thead><tr><th>Fecha</th><th>Pedido</th><th>Venta $</th><th>Tu comisión $</th><th>Estado</th></tr></thead>
+    <tbody>
+    {% for v in ventas %}
+      <tr>
+        <td>{{ v.fecha[:10] }}</td>
+        <td>#{{ v.numero }}</td>
+        <td>${{ '{:,.0f}'.format(v.total).replace(',', '.') }}</td>
+        <td><strong>${{ '{:,.0f}'.format(v.comision).replace(',', '.') }}</strong></td>
+        <td>{% if v.estado == 'pendiente' %}<span class="badge b-warn">a cobrar</span>{% else %}<span class="badge b-ok">pagada</span>{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <small>Todavía no hay ventas registradas. ¡Compartí tu link para arrancar!</small>
+  {% endif %}
+</div>
+
+{% if liquidaciones %}
+<div class="card">
+  <h2>Pagos recibidos</h2>
+  <table>
+    <thead><tr><th>Fecha</th><th>Monto $</th></tr></thead>
+    <tbody>
+    {% for l in liquidaciones %}
+      <tr><td>{{ l.fecha[:10] }}</td><td><strong>${{ '{:,.0f}'.format(l.monto).replace(',', '.') }}</strong></td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+</main>
+<script>
+function copiar(id) {
+  navigator.clipboard.writeText(document.getElementById(id).textContent.trim());
+  alert('¡Copiado!');
+}
+</script>
+</body>
+</html>
