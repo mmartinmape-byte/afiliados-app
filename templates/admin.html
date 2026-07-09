@@ -41,6 +41,7 @@ small{color:var(--g400)}
       <a class="btn btn-p" href="/tn/conectar?clave={{ clave }}">Conectar Tienda Nube</a>
     {% endif %}
     <button class="btn btn-g" onclick="syncManual()" title="Repasa pedidos pagos de los últimos 30 días por si algún webhook se perdió">↻ Sincronizar ventas</button>
+    <button class="btn btn-g" onclick="borrarPruebas()" title="Elimina las ventas simuladas con el botón 🧪">🧹 Borrar pruebas</button>
   </div>
 </header>
 <main>
@@ -110,6 +111,7 @@ async function cargar() {
       <td style="white-space:nowrap">
         ${i.comision_pendiente > 0 ? `<button class="btn btn-p" onclick="liquidar(${i.id}, '${i.nombre}', ${i.comision_pendiente})">💸 Liquidar</button>` : ''}
         <button class="btn btn-g" onclick="toggleActivo(${i.id}, ${i.activo})">${i.activo ? 'Pausar' : 'Activar'}</button>
+        <button class="btn btn-g" onclick="ventaPrueba(${i.id})" title="Simula una venta para probar el circuito">🧪</button>
       </td>
     </tr>`).join('') || '<tr><td colspan="9" style="text-align:center;padding:1.5rem;color:var(--g400)">Todavía no hay influencers.</td></tr>';
 
@@ -158,6 +160,22 @@ async function liquidar(id, nombre, monto) {
 
 async function toggleActivo(id, activo) {
   await api(`/api/influencers/${id}`, {method:'PATCH', body: JSON.stringify({activo: !activo})});
+  cargar();
+}
+
+async function ventaPrueba(id) {
+  const total = prompt('Monto de la venta de prueba ($):', '50000');
+  if (total === null) return;
+  const r = await api('/api/test/venta', {method:'POST', body: JSON.stringify({influencer_id: id, total})});
+  if (r.error) return alert('❌ ' + r.error);
+  alert(`✅ Venta de prueba ${r.order_id} registrada. Mirá la tabla de ventas y el panel del influencer.`);
+  cargar();
+}
+
+async function borrarPruebas() {
+  if (!confirm('¿Borrar todas las ventas de prueba (TEST-...)?')) return;
+  const r = await api('/api/test/ventas', {method:'DELETE'});
+  alert(`✅ ${r.borradas} ventas de prueba borradas.`);
   cargar();
 }
 

@@ -432,6 +432,47 @@ def listar_ventas():
     return jsonify([_row(r) for r in rows])
 
 
+# ── Ventas de prueba (para testear el circuito sin Tienda Nube) ──────────────
+
+@app.route('/api/test/venta', methods=['POST'])
+def crear_venta_prueba():
+    if not _es_admin():
+        return jsonify({'error': 'No autorizado'}), 401
+    d = request.json or {}
+    iid = d.get('influencer_id')
+    try:
+        total = float(d.get('total', 50000))
+    except (TypeError, ValueError):
+        return jsonify({'error': 'Total inválido'}), 400
+    with engine.connect() as conn:
+        inf = conn.execute(text('SELECT * FROM influencers WHERE id=:i'), {'i': iid}).fetchone()
+    if not inf:
+        return jsonify({'error': 'Influencer inexistente'}), 400
+    m = inf._mapping
+    pct = float(m['comision_pct'] or 0)
+    oid = f'TEST-{uuid.uuid4().hex[:8]}'
+    with engine.begin() as conn:
+        conn.execute(text('''
+            INSERT INTO ventas (order_id, numero, fecha, cliente, total,
+                                influencer_id, atribucion, comision_pct,
+                                comision, estado, creado)
+            VALUES (:oid, :num, :f, 'Cliente de prueba', :tot, :inf, 'cupon',
+                    :pct, :com, 'pendiente', :creado)
+        '''), {'oid': oid, 'num': oid, 'f': _now(), 'tot': total,
+               'inf': m['id'], 'pct': pct,
+               'com': round(total * pct / 100, 2), 'creado': _now()})
+    return jsonify({'ok': True, 'order_id': oid})
+
+
+@app.route('/api/test/ventas', methods=['DELETE'])
+def borrar_ventas_prueba():
+    if not _es_admin():
+        return jsonify({'error': 'No autorizado'}), 401
+    with engine.begin() as conn:
+        n = conn.execute(text("DELETE FROM ventas WHERE order_id LIKE 'TEST-%'")).rowcount
+    return jsonify({'ok': True, 'borradas': n})
+
+
 # ── Vistas ────────────────────────────────────────────────────────────────────
 
 @app.route('/')
