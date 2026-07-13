@@ -188,9 +188,13 @@ def _atribuir_orden(order):
     if not infs:
         return None, None
 
-    # 1) Por cupón usado en el pedido
+    # 1) Por cupón usado en el pedido (TN lo devuelve como objeto único,
+    #    pero por las dudas soportamos también lista)
+    cup = order.get('coupon')
+    if isinstance(cup, dict):
+        cup = [cup]
     cupones = [(c.get('code') or '').strip().upper()
-               for c in (order.get('coupon') or []) if isinstance(c, dict)]
+               for c in (cup or []) if isinstance(c, dict)]
     for inf in infs:
         cod = (inf._mapping['cupon_codigo'] or '').strip().upper()
         if cod and cod in cupones:
