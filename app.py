@@ -295,6 +295,38 @@ def sync_manual():
     return jsonify({'ok': True, 'nuevas': nuevos})
 
 
+@app.route('/api/debug/ordenes')
+def debug_ordenes():
+    """Muestra los pedidos crudos de TN para diagnosticar atribución."""
+    if not _es_admin():
+        return jsonify({'error': 'No autorizado'}), 401
+    dias = int(request.args.get('dias', 2))
+    desde = (datetime.now() - timedelta(days=dias)).strftime('%Y-%m-%dT00:00:00')
+    r = req_lib.get(f'{tn_base()}/orders', headers=tn_headers(),
+                    params={'created_at_min': desde, 'per_page': 20})
+    out = {'status': r.status_code, 'ordenes': []}
+    try:
+        data = r.json() if r.status_code == 200 else []
+        for o in (data if isinstance(data, list) else []):
+            out['ordenes'].append({
+                'id': o.get('id'), 'number': o.get('number'),
+                'payment_status': o.get('payment_status'),
+                'status': o.get('status'),
+                'total': o.get('total'),
+                'coupon': o.get('coupon'),
+                'promotional_discount': (o.get('promotional_discount') or {}).get('promotions_applied'),
+                'discount_coupon': o.get('discount_coupon'),
+                'landing_url': o.get('landing_url') or o.get('landing_site'),
+                'created_at': o.get('created_at'), 'paid_at': o.get('paid_at'),
+                'contact_name': o.get('contact_name'),
+            })
+        if not isinstance(data, list):
+            out['respuesta'] = data
+    except Exception as ex:
+        out['error'] = str(ex)
+    return jsonify(out)
+
+
 # ── Influencers ───────────────────────────────────────────────────────────────
 
 def _slug(nombre):
