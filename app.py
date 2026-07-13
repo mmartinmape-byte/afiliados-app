@@ -19,7 +19,8 @@ TN_CLIENT_SECRET = os.environ.get('TN_CLIENT_SECRET', '')
 APP_URL          = os.environ.get('APP_URL', '').rstrip('/')  # ej: https://afiliados-cleantech.up.railway.app
 TIENDA_URL       = os.environ.get('TIENDA_URL', 'https://somoscleantech.com.ar').rstrip('/')
 COMISION_DEFAULT = float(os.environ.get('COMISION_DEFAULT', '10'))
-TN_UA            = 'Cleantech Afiliados (mmartinmape@gmail.com)'
+# Ojo: paréntesis/espacios en el User-Agent disparan el WAF de Cloudflare de TN
+TN_UA            = 'CleantechAfiliados/1.0'
 
 DATABASE_URL = os.environ.get('DATABASE_URL', '')
 if DATABASE_URL.startswith('postgres://'):
@@ -354,6 +355,32 @@ def debug_ordenes():
     except Exception as ex:
         out['error'] = str(ex)
     return jsonify(out)
+
+
+@app.route('/api/debug/limpiar-tienda', methods=['POST'])
+def limpiar_tienda():
+    """Borra de la tienda conectada SOLO lo que creó esta app:
+    su webhook order/paid y los cupones de prueba PRUEBACUPON*."""
+    if not _es_admin():
+        return jsonify({'error': 'No autorizado'}), 401
+    borrado = {'webhooks': [], 'cupones': [], 'tienda': ''}
+    r = req_lib.get(f'{tn_base()}/store', headers=tn_headers())
+    if r.status_code == 200:
+        borrado['tienda'] = (r.json().get('name') or {}).get('es', '')
+    destino = f'{APP_URL}/webhooks/tn'
+    r = req_lib.get(f'{tn_base()}/webhooks', headers=tn_headers())
+    if r.status_code == 200:
+        for w in r.json():
+            if w.get('url') == destino:
+                rr = req_lib.delete(f"{tn_base()}/webhooks/{w['id']}", headers=tn_headers())
+                borrado['webhooks'].append({'id': w['id'], 'status': rr.status_code})
+    r = req_lib.get(f'{tn_base()}/coupons', headers=tn_headers())
+    if r.status_code == 200:
+        for c in r.json():
+            if (c.get('code') or '').upper().startswith('PRUEBACUPON'):
+                rr = req_lib.delete(f"{tn_base()}/coupons/{c['id']}", headers=tn_headers())
+                borrado['cupones'].append({'code': c.get('code'), 'status': rr.status_code})
+    return jsonify(borrado)
 
 
 # ── Influencers ───────────────────────────────────────────────────────────────
