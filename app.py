@@ -311,21 +311,26 @@ def debug_ordenes():
            'scopes_del_token': cfg.get('scope', '(desconocido: reconectar para capturarlo)')}
     if r.status_code != 200:
         out['detalle_error'] = r.text[:300]
-    # Sondas: qué endpoints de TN responden y cuáles bloquean
+    # Sondas: probar GET /store con distintos User-Agent para aislar el bloqueo
     out['probes'] = {}
-    for nombre, path, params in (
-        ('orders_sin_params', '/orders', None),
-        ('store', '/store', None),
-        ('coupons', '/coupons', None),
-        ('webhooks', '/webhooks', None),
-    ):
+    cfg2 = tn_config()
+    uas = {
+        'ua_actual': TN_UA,
+        'ua_navegador': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36',
+        'ua_simple': 'CleantechAfiliados/1.0',
+    }
+    for nombre, ua in uas.items():
         try:
-            rr = req_lib.get(f'{tn_base()}{path}', headers=tn_headers(),
-                             params=params, timeout=20)
+            rr = req_lib.get(f'{tn_base()}/store', headers={
+                'Authentication': f"bearer {cfg2.get('access_token', '')}",
+                'User-Agent': ua,
+                'Content-Type': 'application/json',
+            }, timeout=20)
+            es_html = 'html' in rr.headers.get('content-type', '')
             out['probes'][nombre] = {
                 'status': rr.status_code,
-                'tipo': rr.headers.get('content-type', '')[:40],
-                'body': rr.text[:150],
+                'bloqueado_cf': es_html,
+                'body': '' if es_html else rr.text[:150],
             }
         except Exception as ex:
             out['probes'][nombre] = {'error': str(ex)}
