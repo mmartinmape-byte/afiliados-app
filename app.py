@@ -77,6 +77,13 @@ with engine.begin() as conn:
         )'''))
 
 
+@app.errorhandler(Exception)
+def _error_detalle(e):
+    import traceback
+    print(f'ERROR: {traceback.format_exc()}')
+    return jsonify({'error': str(e)}), 500
+
+
 def _now():
     return datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
