@@ -311,6 +311,24 @@ def debug_ordenes():
            'scopes_del_token': cfg.get('scope', '(desconocido: reconectar para capturarlo)')}
     if r.status_code != 200:
         out['detalle_error'] = r.text[:300]
+    # Sondas: qué endpoints de TN responden y cuáles bloquean
+    out['probes'] = {}
+    for nombre, path, params in (
+        ('orders_sin_params', '/orders', None),
+        ('store', '/store', None),
+        ('coupons', '/coupons', None),
+        ('webhooks', '/webhooks', None),
+    ):
+        try:
+            rr = req_lib.get(f'{tn_base()}{path}', headers=tn_headers(),
+                             params=params, timeout=20)
+            out['probes'][nombre] = {
+                'status': rr.status_code,
+                'tipo': rr.headers.get('content-type', '')[:40],
+                'body': rr.text[:150],
+            }
+        except Exception as ex:
+            out['probes'][nombre] = {'error': str(ex)}
     try:
         data = r.json() if r.status_code == 200 else []
         for o in (data if isinstance(data, list) else []):
