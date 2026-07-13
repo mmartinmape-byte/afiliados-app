@@ -155,6 +155,7 @@ def tn_callback():
         return f'Error al obtener token: {data}', 500
     tn_guardar('access_token', data['access_token'])
     tn_guardar('store_id', str(data.get('user_id', '')))
+    tn_guardar('scope', str(data.get('scope', '')))
     aviso = _registrar_webhook()
     return redirect(f'/admin?clave={ADMIN_KEY}&conectada=1&webhook={aviso}')
 
@@ -304,7 +305,12 @@ def debug_ordenes():
     desde = (datetime.now() - timedelta(days=dias)).strftime('%Y-%m-%dT00:00:00')
     r = req_lib.get(f'{tn_base()}/orders', headers=tn_headers(),
                     params={'created_at_min': desde, 'per_page': 20})
-    out = {'status': r.status_code, 'ordenes': []}
+    cfg = tn_config()
+    out = {'status': r.status_code, 'ordenes': [],
+           'store_id': cfg.get('store_id', ''),
+           'scopes_del_token': cfg.get('scope', '(desconocido: reconectar para capturarlo)')}
+    if r.status_code != 200:
+        out['detalle_error'] = r.text[:300]
     try:
         data = r.json() if r.status_code == 200 else []
         for o in (data if isinstance(data, list) else []):
