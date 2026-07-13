@@ -531,6 +531,22 @@ def listar_ventas():
     return jsonify([_row(r) for r in rows])
 
 
+@app.route('/api/ventas/<int:vid>', methods=['DELETE'])
+def borrar_venta(vid):
+    """Borra una venta atribuida (ej. pedidos de prueba o cancelados)."""
+    if not _es_admin():
+        return jsonify({'error': 'No autorizado'}), 401
+    with engine.begin() as conn:
+        row = conn.execute(text('SELECT numero, estado FROM ventas WHERE id=:id'),
+                           {'id': vid}).fetchone()
+        if not row:
+            return jsonify({'error': 'Venta inexistente'}), 404
+        if row[1] == 'liquidada':
+            return jsonify({'error': 'Ya fue liquidada: borrarla desbalancearía las liquidaciones'}), 400
+        conn.execute(text('DELETE FROM ventas WHERE id=:id'), {'id': vid})
+    return jsonify({'ok': True})
+
+
 # ── Ventas de prueba (para testear el circuito sin Tienda Nube) ──────────────
 
 @app.route('/api/test/venta', methods=['POST'])

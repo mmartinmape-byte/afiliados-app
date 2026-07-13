@@ -74,7 +74,7 @@ small{color:var(--g400)}
   <h2>Últimas ventas con afiliado</h2>
   <div style="overflow-x:auto">
   <table>
-    <thead><tr><th>Fecha</th><th>Pedido</th><th>Cliente</th><th>Influencer</th><th>Vía</th><th>Total $</th><th>Comisión $</th><th>Estado</th></tr></thead>
+    <thead><tr><th>Fecha</th><th>Pedido</th><th>Cliente</th><th>Influencer</th><th>Vía</th><th>Total $</th><th>Comisión $</th><th>Estado</th><th></th></tr></thead>
     <tbody id="tb-ventas"></tbody>
   </table>
   </div>
@@ -126,7 +126,8 @@ async function cargar() {
       <td>$${fmt(v.total)}</td>
       <td><strong>$${fmt(v.comision)}</strong> <small>(${v.comision_pct}%)</small></td>
       <td>${v.estado === 'pendiente' ? '<span class="badge b-warn">pendiente</span>' : '<span class="badge b-ok">liquidada</span>'}</td>
-    </tr>`).join('') || '<tr><td colspan="8" style="text-align:center;padding:1.5rem;color:var(--g400)">Sin ventas atribuidas todavía.</td></tr>';
+      <td>${v.estado === 'pendiente' ? `<button class="btn btn-g" onclick="borrarVenta(${v.id}, '${v.numero}')" title="Borrar esta venta (para pedidos de prueba o cancelados)">🗑</button>` : ''}</td>
+    </tr>`).join('') || '<tr><td colspan="9" style="text-align:center;padding:1.5rem;color:var(--g400)">Sin ventas atribuidas todavía.</td></tr>';
 }
 
 function i_panel(token) { return '/i/' + token; }
@@ -169,6 +170,14 @@ async function ventaPrueba(id) {
   const r = await api('/api/test/venta', {method:'POST', body: JSON.stringify({influencer_id: id, total})});
   if (r.error) return alert('❌ ' + r.error);
   alert(`✅ Venta de prueba ${r.order_id} registrada. Mirá la tabla de ventas y el panel del influencer.`);
+  cargar();
+}
+
+async function borrarVenta(id, numero) {
+  if (!confirm(`¿Borrar la venta #${numero}?\n\nUsalo solo para pedidos de prueba o cancelados: la comisión se descuenta del pendiente del influencer.`)) return;
+  const r = await api(`/api/ventas/${id}`, {method:'DELETE'});
+  if (r.error) return alert('❌ ' + r.error);
+  alert(`✅ Venta #${numero} borrada.`);
   cargar();
 }
 
