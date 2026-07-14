@@ -361,6 +361,35 @@ def debug_ordenes():
     return jsonify(out)
 
 
+@app.route('/api/debug/atribucion')
+def debug_atribucion():
+    """Muestra los campos de tracking de los últimos pedidos para diagnosticar
+    la atribución por link (landing_url, utm, referral, etc.)."""
+    if not _es_admin():
+        return jsonify({'error': 'No autorizado'}), 401
+    dias = int(request.args.get('dias', 3))
+    desde = (datetime.now() - timedelta(days=dias)).strftime('%Y-%m-%dT00:00:00')
+    r = req_lib.get(f'{tn_base()}/orders', headers=tn_headers(),
+                    params={'created_at_min': desde, 'per_page': 10})
+    if r.status_code != 200:
+        return jsonify({'error': f'TN respondió {r.status_code}', 'detalle': r.text[:200]}), 500
+    out = []
+    for o in r.json():
+        out.append({
+            'numero': o.get('number'),
+            'pago': o.get('payment_status'),
+            'cupon': [c.get('code') for c in (o.get('coupon') or [])] if isinstance(o.get('coupon'), list)
+                     else (o.get('coupon') or {}).get('code'),
+            'landing_url': o.get('landing_url'),
+            'landing_site': o.get('landing_site'),
+            'referral_url': o.get('referral_url'),
+            'utm_campos': {k: v for k, v in o.items() if 'utm' in k.lower()},
+            'client_details': o.get('client_details'),
+            'campos_disponibles': sorted(o.keys()),
+        })
+    return jsonify(out)
+
+
 @app.route('/api/debug/limpiar-tienda', methods=['POST'])
 def limpiar_tienda():
     """Borra de la tienda conectada SOLO lo que creó esta app:
