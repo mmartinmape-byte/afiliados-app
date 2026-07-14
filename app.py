@@ -381,11 +381,11 @@ def debug_atribucion():
             'cupon': [c.get('code') for c in (o.get('coupon') or [])] if isinstance(o.get('coupon'), list)
                      else (o.get('coupon') or {}).get('code'),
             'landing_url': o.get('landing_url'),
-            'landing_site': o.get('landing_site'),
-            'referral_url': o.get('referral_url'),
-            'utm_campos': {k: v for k, v in o.items() if 'utm' in k.lower()},
-            'client_details': o.get('client_details'),
-            'campos_disponibles': sorted(o.keys()),
+            'customer_visit': o.get('customer_visit'),
+            'storefront': o.get('storefront'),
+            'order_origin': o.get('order_origin'),
+            'extra': o.get('extra'),
+            'attributes': o.get('attributes'),
         })
     return jsonify(out)
 
