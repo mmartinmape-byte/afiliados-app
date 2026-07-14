@@ -17,7 +17,9 @@ ADMIN_KEY        = os.environ.get('ADMIN_KEY', 'admin123')
 TN_CLIENT_ID     = os.environ.get('TN_CLIENT_ID', '')
 TN_CLIENT_SECRET = os.environ.get('TN_CLIENT_SECRET', '')
 APP_URL          = os.environ.get('APP_URL', '').rstrip('/')  # ej: https://afiliados-cleantech.up.railway.app
-TIENDA_URL       = os.environ.get('TIENDA_URL', 'https://somoscleantech.com.ar').rstrip('/')
+# Con www: la redirección de somoscleantech.com.ar → www. descarta los
+# parámetros utm y rompe la atribución por link
+TIENDA_URL       = os.environ.get('TIENDA_URL', 'https://www.somoscleantech.com.ar').rstrip('/')
 COMISION_DEFAULT = float(os.environ.get('COMISION_DEFAULT', '10'))
 # Ojo: paréntesis/espacios en el User-Agent disparan el WAF de Cloudflare de TN
 TN_UA            = 'CleantechAfiliados/1.0'
@@ -200,14 +202,20 @@ def _atribuir_orden(order):
         if cod and cod in cupones:
             return inf, 'cupon'
 
-    # 2) Por link de entrada (utm_source=slug o ?ref=slug)
-    landing = order.get('landing_url') or order.get('landing_site') or ''
+    # 2) Por link: utm_source registrado por TN en la visita del comprador
+    #    (campo customer_visit), con la URL de entrada como respaldo
+    marcas = []
+    visita = order.get('customer_visit') or {}
+    utm = (visita.get('utm_parameters') or {})
+    if utm.get('utm_source'):
+        marcas.append(str(utm['utm_source']).strip().lower())
+    landing = order.get('landing_url') or visita.get('landing_page') or ''
     try:
         qs = parse_qs(urlparse(landing).query)
-        marcas = [v.strip().lower() for k in ('utm_source', 'ref')
-                  for v in qs.get(k, [])]
+        marcas += [v.strip().lower() for k in ('utm_source', 'ref')
+                   for v in qs.get(k, [])]
     except Exception:
-        marcas = []
+        pass
     for inf in infs:
         if inf._mapping['slug'].lower() in marcas:
             return inf, 'link'
