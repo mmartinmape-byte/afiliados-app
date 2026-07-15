@@ -3,10 +3,10 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>Mis comisiones — Cleantech</title>
+<title>Mis comisiones — {{ tienda_nombre }}</title>
 <style>
-/* Paleta de marca Cleantech (del theme de la tienda) */
-:root{--verde:#3488ff;--verde-dk:#1d5fd0;--acento:#8d4dfc;--g50:#f4f3ff;--g200:#e5e7eb;--g400:#9ca3af;--g600:#4b5563;--g900:#3d3d3d;--sh:0 1px 3px rgba(0,0,0,.08)}
+/* Paleta ReferidosApp */
+:root{--verde:#6366f1;--verde-dk:#4338ca;--acento:#8d4dfc;--g50:#f5f5fa;--g200:#e5e7eb;--g400:#9ca3af;--g600:#4b5563;--g900:#27272a;--sh:0 1px 3px rgba(0,0,0,.08)}
 *{margin:0;padding:0;box-sizing:border-box}
 body{font-family:system-ui,-apple-system,sans-serif;background:var(--g50);color:var(--g900)}
 header{background:linear-gradient(135deg,var(--verde-dk),var(--verde));color:#fff;padding:1.6rem 1.2rem;text-align:center}
@@ -30,9 +30,8 @@ small{color:var(--g400)}
 </head>
 <body>
 <header>
-  <img src="/static/logo.webp" alt="Cleantech" style="height:28px;margin-bottom:.7rem"/>
   <h1>Hola, {{ inf.nombre }} 👋</h1>
-  <div style="opacity:.85;font-size:.85rem">Tu panel de afiliado</div>
+  <div style="opacity:.85;font-size:.85rem">Tu panel de afiliado de {{ tienda_nombre }}</div>
 </header>
 <main>
 

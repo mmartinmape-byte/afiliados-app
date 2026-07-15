@@ -1,7 +1,11 @@
-# ── Afiliados Cleantech ───────────────────────────────────────────────────────
-# App de afiliados para la Tienda Nube de Cleantech (somoscleantech.com.ar).
-# Cada influencer tiene un cupón y un link con tracking; cuando un pedido se
-# paga, el webhook de Tienda Nube acredita la comisión automáticamente.
+# ── ReferidosApp ──────────────────────────────────────────────────────────────
+# Programa de afiliados/influencers multi-tienda para Tienda Nube.
+# Cada tienda que instala la app obtiene su propio espacio: influencers con
+# cupón y link de tracking, atribución automática de ventas al pagarse el
+# pedido (webhook order/paid), comisiones y liquidaciones.
+#
+# Historia: nació como app single-tenant para Cleantech (somoscleantech.com.ar);
+# la migración de arranque convierte esos datos en la tienda #1.
 
 from flask import Flask, render_template, request, jsonify, redirect
 from sqlalchemy import create_engine, text
@@ -13,16 +17,18 @@ from urllib.parse import urlparse, parse_qs
 app = Flask(__name__)
 
 # ── Config ────────────────────────────────────────────────────────────────────
-ADMIN_KEY        = os.environ.get('ADMIN_KEY', 'admin123')
+SUPERADMIN_KEY   = os.environ.get('ADMIN_KEY', 'admin123')  # panel del dueño de la app
 TN_CLIENT_ID     = os.environ.get('TN_CLIENT_ID', '')
 TN_CLIENT_SECRET = os.environ.get('TN_CLIENT_SECRET', '')
-APP_URL          = os.environ.get('APP_URL', '').rstrip('/')  # ej: https://afiliados-cleantech.up.railway.app
-# Con www: la redirección de somoscleantech.com.ar → www. descarta los
-# parámetros utm y rompe la atribución por link
-TIENDA_URL       = os.environ.get('TIENDA_URL', 'https://www.somoscleantech.com.ar').rstrip('/')
+APP_URL          = os.environ.get('APP_URL', '').rstrip('/')
 COMISION_DEFAULT = float(os.environ.get('COMISION_DEFAULT', '10'))
 # Ojo: paréntesis/espacios en el User-Agent disparan el WAF de Cloudflare de TN
-TN_UA            = 'CleantechAfiliados/1.0'
+TN_UA            = 'ReferidosApp/1.0'
+PLAN_FREE_MAX_INFLUENCERS = 1
+
+# URL de la tienda Cleantech para la migración inicial (con www: la redirección
+# sin www descarta los parámetros utm y rompe la atribución por link)
+CLEANTECH_URL = os.environ.get('TIENDA_URL', 'https://www.somoscleantech.com.ar').rstrip('/')
 
 DATABASE_URL = os.environ.get('DATABASE_URL', '')
 if DATABASE_URL.startswith('postgres://'):
@@ -33,51 +39,133 @@ engine = create_engine(DATABASE_URL if IS_PG else 'sqlite:///afiliados.db',
 
 AUTOINC = 'SERIAL PRIMARY KEY' if IS_PG else 'INTEGER PRIMARY KEY AUTOINCREMENT'
 
-with engine.begin() as conn:
-    conn.execute(text(f'''
-        CREATE TABLE IF NOT EXISTS influencers (
-            id            {AUTOINC},
-            nombre        TEXT NOT NULL,
-            slug          TEXT NOT NULL UNIQUE,
-            instagram     TEXT NOT NULL DEFAULT '',
-            email         TEXT NOT NULL DEFAULT '',
-            alias_mp      TEXT NOT NULL DEFAULT '',
-            comision_pct  REAL NOT NULL DEFAULT 10,
-            descuento_pct REAL NOT NULL DEFAULT 0,
-            cupon_codigo  TEXT NOT NULL DEFAULT '',
-            token         TEXT NOT NULL UNIQUE,
-            activo        INTEGER NOT NULL DEFAULT 1,
-            creado        TEXT NOT NULL
-        )'''))
-    conn.execute(text(f'''
-        CREATE TABLE IF NOT EXISTS ventas (
-            id             {AUTOINC},
-            order_id       TEXT NOT NULL UNIQUE,
-            numero         TEXT NOT NULL DEFAULT '',
-            fecha          TEXT NOT NULL,
-            cliente        TEXT NOT NULL DEFAULT '',
-            total          REAL NOT NULL DEFAULT 0,
-            influencer_id  INTEGER NOT NULL,
-            atribucion     TEXT NOT NULL DEFAULT 'cupon',
-            comision_pct   REAL NOT NULL DEFAULT 10,
-            comision       REAL NOT NULL DEFAULT 0,
-            estado         TEXT NOT NULL DEFAULT 'pendiente',
-            liquidacion_id INTEGER,
-            creado         TEXT NOT NULL
-        )'''))
-    conn.execute(text(f'''
-        CREATE TABLE IF NOT EXISTS liquidaciones (
-            id            {AUTOINC},
-            influencer_id INTEGER NOT NULL,
-            monto         REAL NOT NULL,
-            fecha         TEXT NOT NULL,
-            notas         TEXT NOT NULL DEFAULT ''
-        )'''))
-    conn.execute(text('''
-        CREATE TABLE IF NOT EXISTS tn_config (
-            key   TEXT PRIMARY KEY,
-            value TEXT
-        )'''))
+
+# ── Esquema y migración ───────────────────────────────────────────────────────
+
+def _crear_esquema():
+    with engine.begin() as conn:
+        conn.execute(text(f'''
+            CREATE TABLE IF NOT EXISTS tiendas (
+                id           {AUTOINC},
+                store_id     TEXT NOT NULL UNIQUE,
+                nombre       TEXT NOT NULL DEFAULT '',
+                url          TEXT NOT NULL DEFAULT '',
+                email        TEXT NOT NULL DEFAULT '',
+                access_token TEXT NOT NULL DEFAULT '',
+                clave_admin  TEXT NOT NULL UNIQUE,
+                plan         TEXT NOT NULL DEFAULT 'free',
+                activa       INTEGER NOT NULL DEFAULT 1,
+                creado       TEXT NOT NULL
+            )'''))
+        conn.execute(text(f'''
+            CREATE TABLE IF NOT EXISTS influencers (
+                id            {AUTOINC},
+                tienda_id     INTEGER NOT NULL DEFAULT 0,
+                nombre        TEXT NOT NULL,
+                slug          TEXT NOT NULL,
+                instagram     TEXT NOT NULL DEFAULT '',
+                email         TEXT NOT NULL DEFAULT '',
+                alias_mp      TEXT NOT NULL DEFAULT '',
+                comision_pct  REAL NOT NULL DEFAULT 10,
+                descuento_pct REAL NOT NULL DEFAULT 0,
+                cupon_codigo  TEXT NOT NULL DEFAULT '',
+                token         TEXT NOT NULL UNIQUE,
+                activo        INTEGER NOT NULL DEFAULT 1,
+                creado        TEXT NOT NULL
+            )'''))
+        conn.execute(text(f'''
+            CREATE TABLE IF NOT EXISTS ventas (
+                id             {AUTOINC},
+                tienda_id      INTEGER NOT NULL DEFAULT 0,
+                order_id       TEXT NOT NULL UNIQUE,
+                numero         TEXT NOT NULL DEFAULT '',
+                fecha          TEXT NOT NULL,
+                cliente        TEXT NOT NULL DEFAULT '',
+                total          REAL NOT NULL DEFAULT 0,
+                influencer_id  INTEGER NOT NULL,
+                atribucion     TEXT NOT NULL DEFAULT 'cupon',
+                comision_pct   REAL NOT NULL DEFAULT 10,
+                comision       REAL NOT NULL DEFAULT 0,
+                estado         TEXT NOT NULL DEFAULT 'pendiente',
+                liquidacion_id INTEGER,
+                creado         TEXT NOT NULL
+            )'''))
+        conn.execute(text(f'''
+            CREATE TABLE IF NOT EXISTS liquidaciones (
+                id            {AUTOINC},
+                tienda_id     INTEGER NOT NULL DEFAULT 0,
+                influencer_id INTEGER NOT NULL,
+                monto         REAL NOT NULL,
+                fecha         TEXT NOT NULL,
+                notas         TEXT NOT NULL DEFAULT ''
+            )'''))
+        conn.execute(text('''
+            CREATE TABLE IF NOT EXISTS tn_config (
+                key   TEXT PRIMARY KEY,
+                value TEXT
+            )'''))
+
+
+def _migrar_multitienda():
+    """Migración single-tenant → multi-tienda. Idempotente.
+    Convierte la conexión original (tn_config) en la tienda #1 y le asigna
+    todos los datos existentes. La clave de admin histórica sigue vigente."""
+    try:
+        # 1) Columnas tienda_id en tablas preexistentes
+        if IS_PG:
+            with engine.begin() as conn:
+                for t in ('influencers', 'ventas', 'liquidaciones'):
+                    conn.execute(text(
+                        f'ALTER TABLE {t} ADD COLUMN IF NOT EXISTS tienda_id INTEGER NOT NULL DEFAULT 0'))
+                # El slug pasa a ser único POR TIENDA (era único global)
+                conn.execute(text(
+                    'ALTER TABLE influencers DROP CONSTRAINT IF EXISTS influencers_slug_key'))
+                conn.execute(text(
+                    'CREATE UNIQUE INDEX IF NOT EXISTS idx_influencers_tienda_slug '
+                    'ON influencers (tienda_id, slug)'))
+        else:
+            with engine.connect() as conn:
+                for t in ('influencers', 'ventas', 'liquidaciones'):
+                    cols = [r[1] for r in conn.execute(text(f'PRAGMA table_info({t})')).fetchall()]
+                    if 'tienda_id' not in cols:
+                        with engine.begin() as c2:
+                            c2.execute(text(
+                                f'ALTER TABLE {t} ADD COLUMN tienda_id INTEGER NOT NULL DEFAULT 0'))
+
+        # 2) La conexión original (tn_config) se convierte en la tienda #1
+        with engine.begin() as conn:
+            cfg = {r[0]: r[1] for r in conn.execute(
+                text('SELECT key, value FROM tn_config')).fetchall()}
+            hay_tiendas = conn.execute(text('SELECT COUNT(*) FROM tiendas')).fetchone()[0]
+            if cfg.get('access_token') and cfg.get('store_id') and not hay_tiendas:
+                conn.execute(text('''
+                    INSERT INTO tiendas (store_id, nombre, url, access_token,
+                                         clave_admin, plan, activa, creado)
+                    VALUES (:sid, 'Cleantech', :url, :tok, :clave, 'pro', 1, :cr)
+                '''), {'sid': cfg['store_id'], 'url': CLEANTECH_URL,
+                       'tok': cfg['access_token'], 'clave': SUPERADMIN_KEY,
+                       'cr': _now()})
+                print('  Migración: Cleantech dada de alta como tienda #1.')
+
+            # 3) Adoptar datos huérfanos (tienda_id=0) a la tienda #1
+            primera = conn.execute(text(
+                'SELECT id FROM tiendas ORDER BY id LIMIT 1')).fetchone()
+            if primera:
+                for t in ('influencers', 'ventas', 'liquidaciones'):
+                    n = conn.execute(text(
+                        f'UPDATE {t} SET tienda_id=:tid WHERE tienda_id=0'),
+                        {'tid': primera[0]}).rowcount
+                    if n:
+                        print(f'  Migración: {n} filas de {t} asignadas a la tienda #1.')
+    except Exception as ex:
+        print(f'  Aviso migración multi-tienda: {ex}')
+
+
+def _now():
+    return datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+_crear_esquema()
+_migrar_multitienda()
 
 
 @app.errorhandler(Exception)
@@ -87,63 +175,52 @@ def _error_detalle(e):
     return jsonify({'error': str(e)}), 500
 
 
-def _now():
-    return datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-
 def _row(r):
     return dict(r._mapping)
 
-def _es_admin():
-    clave = request.args.get('clave') or request.headers.get('X-Admin-Key') or ''
-    return clave == ADMIN_KEY
 
+# ── Resolución de tienda y permisos ──────────────────────────────────────────
 
-# ── Tienda Nube API ───────────────────────────────────────────────────────────
+def _clave_request():
+    return (request.args.get('clave') or request.headers.get('X-Admin-Key') or '').strip()
 
-def tn_config():
+def _es_superadmin():
+    return _clave_request() == SUPERADMIN_KEY
+
+def tienda_actual():
+    """Resuelve la tienda del comerciante por su clave de admin."""
+    clave = _clave_request()
+    if not clave:
+        return None
     with engine.connect() as conn:
-        rows = conn.execute(text('SELECT key, value FROM tn_config')).fetchall()
-    return {r[0]: r[1] for r in rows}
+        row = conn.execute(text(
+            'SELECT * FROM tiendas WHERE clave_admin=:c AND activa=1'),
+            {'c': clave}).fetchone()
+    return row
 
-def tn_guardar(key, value):
-    with engine.begin() as conn:
-        if IS_PG:
-            conn.execute(text(
-                'INSERT INTO tn_config (key, value) VALUES (:k, :v) '
-                'ON CONFLICT (key) DO UPDATE SET value=:v'), {'k': key, 'v': value})
-        else:
-            conn.execute(text(
-                'INSERT OR REPLACE INTO tn_config (key, value) VALUES (:k, :v)'),
-                {'k': key, 'v': value})
+def tienda_por_store_id(store_id):
+    with engine.connect() as conn:
+        return conn.execute(text(
+            'SELECT * FROM tiendas WHERE store_id=:s'),
+            {'s': str(store_id)}).fetchone()
 
-def tn_headers():
-    cfg = tn_config()
+
+# ── Tienda Nube API (por tienda) ──────────────────────────────────────────────
+
+def tn_headers(tienda):
     return {
-        'Authentication': f"bearer {cfg.get('access_token', '')}",
+        'Authentication': f"bearer {tienda._mapping['access_token']}",
         'User-Agent': TN_UA,
         'Content-Type': 'application/json',
     }
 
-def tn_base():
-    cfg = tn_config()
-    return f"https://api.tiendanube.com/v1/{cfg.get('store_id', '')}"
-
-def tn_conectada():
-    cfg = tn_config()
-    return bool(cfg.get('access_token') and cfg.get('store_id'))
-
-
-@app.route('/tn/conectar')
-def tn_conectar():
-    if not _es_admin():
-        return 'No autorizado', 401
-    if not TN_CLIENT_ID:
-        return 'Falta configurar TN_CLIENT_ID en las variables de entorno.', 500
-    return redirect(f'https://www.tiendanube.com/apps/{TN_CLIENT_ID}/authorize')
+def tn_base(tienda):
+    return f"https://api.tiendanube.com/v1/{tienda._mapping['store_id']}"
 
 
 @app.route('/tn/callback')
 def tn_callback():
+    """Alta/reconexión automática: cualquier tienda que instala la app."""
     code = request.args.get('code')
     if not code:
         return 'Error: Tienda Nube no devolvió el código de autorización.', 400
@@ -156,24 +233,56 @@ def tn_callback():
     data = r.json()
     if 'access_token' not in data:
         return f'Error al obtener token: {data}', 500
-    tn_guardar('access_token', data['access_token'])
-    tn_guardar('store_id', str(data.get('user_id', '')))
-    tn_guardar('scope', str(data.get('scope', '')))
-    aviso = _registrar_webhook()
-    return redirect(f'/admin?clave={ADMIN_KEY}&conectada=1&webhook={aviso}')
+    store_id = str(data.get('user_id', ''))
+    token = data['access_token']
+
+    existente = tienda_por_store_id(store_id)
+    if existente:
+        with engine.begin() as conn:
+            conn.execute(text(
+                'UPDATE tiendas SET access_token=:t, activa=1 WHERE store_id=:s'),
+                {'t': token, 's': store_id})
+        tienda = tienda_por_store_id(store_id)
+    else:
+        with engine.begin() as conn:
+            conn.execute(text('''
+                INSERT INTO tiendas (store_id, access_token, clave_admin, plan, activa, creado)
+                VALUES (:s, :t, :clave, 'free', 1, :cr)
+            '''), {'s': store_id, 't': token, 'clave': uuid.uuid4().hex, 'cr': _now()})
+        tienda = tienda_por_store_id(store_id)
+
+    # Completar nombre/URL/email desde la API de la tienda
+    try:
+        rs = req_lib.get(f'{tn_base(tienda)}/store', headers=tn_headers(tienda), timeout=20)
+        if rs.status_code == 200:
+            s = rs.json()
+            nombre = (s.get('name') or {}).get('es') or (s.get('name') or {}).get('pt') or ''
+            url = (s.get('url_with_brand') or '').rstrip('/')
+            email = s.get('email') or ''
+            with engine.begin() as conn:
+                conn.execute(text(
+                    'UPDATE tiendas SET nombre=COALESCE(NULLIF(:n, \'\'), nombre), '
+                    'url=COALESCE(NULLIF(:u, \'\'), url), email=:e WHERE store_id=:s'),
+                    {'n': nombre, 'u': url, 'e': email, 's': store_id})
+        tienda = tienda_por_store_id(store_id)
+    except Exception as ex:
+        print(f'  Aviso: no se pudo leer /store al instalar ({ex})')
+
+    _registrar_webhook(tienda)
+    return redirect(f"/admin?clave={tienda._mapping['clave_admin']}&bienvenida=1")
 
 
-def _registrar_webhook():
-    """Registra (una vez) el webhook order/paid apuntando a esta app."""
+def _registrar_webhook(tienda):
+    """Registra (una vez) el webhook order/paid de esta tienda."""
     url_base = APP_URL or request.url_root.rstrip('/')
     destino = f'{url_base}/webhooks/tn'
     try:
-        r = req_lib.get(f'{tn_base()}/webhooks', headers=tn_headers())
+        r = req_lib.get(f'{tn_base(tienda)}/webhooks', headers=tn_headers(tienda))
         existentes = r.json() if r.status_code == 200 else []
         for w in existentes:
             if w.get('event') == 'order/paid' and w.get('url') == destino:
                 return 'ya-existia'
-        r = req_lib.post(f'{tn_base()}/webhooks', headers=tn_headers(),
+        r = req_lib.post(f'{tn_base(tienda)}/webhooks', headers=tn_headers(tienda),
                          json={'event': 'order/paid', 'url': destino})
         return 'creado' if r.status_code in (200, 201) else f'error-{r.status_code}'
     except Exception as ex:
@@ -182,16 +291,15 @@ def _registrar_webhook():
 
 # ── Atribución y registro de ventas ──────────────────────────────────────────
 
-def _atribuir_orden(order):
+def _atribuir_orden(tienda_id, order):
     """Devuelve (influencer_row, 'cupon'|'link') o (None, None)."""
     with engine.connect() as conn:
         infs = conn.execute(text(
-            'SELECT * FROM influencers WHERE activo=1')).fetchall()
+            'SELECT * FROM influencers WHERE activo=1 AND tienda_id=:t'),
+            {'t': tienda_id}).fetchall()
     if not infs:
         return None, None
 
-    # 1) Por cupón usado en el pedido (TN lo devuelve como objeto único,
-    #    pero por las dudas soportamos también lista)
     cup = order.get('coupon')
     if isinstance(cup, dict):
         cup = [cup]
@@ -202,8 +310,6 @@ def _atribuir_orden(order):
         if cod and cod in cupones:
             return inf, 'cupon'
 
-    # 2) Por link: utm_source registrado por TN en la visita del comprador
-    #    (campo customer_visit), con la URL de entrada como respaldo
     marcas = []
     visita = order.get('customer_visit') or {}
     utm = (visita.get('utm_parameters') or {})
@@ -223,8 +329,9 @@ def _atribuir_orden(order):
     return None, None
 
 
-def _registrar_venta(order):
-    """Guarda la venta con su comisión si corresponde a un influencer."""
+def _registrar_venta(tienda, order):
+    """Guarda la venta con su comisión si corresponde a un influencer de la tienda."""
+    tienda_id = tienda._mapping['id']
     order_id = str(order.get('id', ''))
     if not order_id:
         return None
@@ -234,7 +341,7 @@ def _registrar_venta(order):
     if ya:
         return 'duplicada'
 
-    inf, via = _atribuir_orden(order)
+    inf, via = _atribuir_orden(tienda_id, order)
     if not inf:
         return 'sin-influencer'
 
@@ -242,16 +349,16 @@ def _registrar_venta(order):
     total = float(order.get('total') or 0)
     pct = float(m['comision_pct'] or 0)
     comision = round(total * pct / 100, 2)
-    cliente = (order.get('contact_name') or order.get('customer', {}).get('name')
-               if isinstance(order.get('customer'), dict) else order.get('contact_name')) or ''
+    cliente = (order.get('contact_name') or '')
     with engine.begin() as conn:
         conn.execute(text('''
-            INSERT INTO ventas (order_id, numero, fecha, cliente, total,
+            INSERT INTO ventas (tienda_id, order_id, numero, fecha, cliente, total,
                                 influencer_id, atribucion, comision_pct,
                                 comision, estado, creado)
-            VALUES (:oid, :num, :f, :cli, :tot, :inf, :via, :pct, :com,
+            VALUES (:tid, :oid, :num, :f, :cli, :tot, :inf, :via, :pct, :com,
                     'pendiente', :creado)
-        '''), {'oid': order_id, 'num': str(order.get('number') or ''),
+        '''), {'tid': tienda_id, 'oid': order_id,
+               'num': str(order.get('number') or ''),
                'f': (order.get('paid_at') or order.get('created_at') or _now())[:19].replace('T', ' '),
                'cli': cliente, 'tot': total, 'inf': m['id'], 'via': via,
                'pct': pct, 'com': comision, 'creado': _now()})
@@ -261,7 +368,6 @@ def _registrar_venta(order):
 @app.route('/webhooks/tn', methods=['POST'])
 def webhook_tn():
     raw = request.get_data()
-    # Verificar firma HMAC si tenemos el secret
     firma = request.headers.get('x-linkedstore-hmac-sha256', '')
     if TN_CLIENT_SECRET and firma:
         esperada = hmac.new(TN_CLIENT_SECRET.encode(), raw, hashlib.sha256).hexdigest()
@@ -271,28 +377,43 @@ def webhook_tn():
         payload = json.loads(raw.decode() or '{}')
     except Exception:
         return jsonify({'error': 'payload inválido'}), 400
-    if payload.get('event') != 'order/paid':
-        return jsonify({'ok': True, 'ignorado': payload.get('event')})
+
+    evento = payload.get('event', '')
+    # Webhooks de privacidad (LGPD): responder OK; store/redact desactiva la tienda
+    if evento in ('store/redact', 'customers/redact', 'customers/data_request'):
+        if evento == 'store/redact' and payload.get('store_id'):
+            with engine.begin() as conn:
+                conn.execute(text(
+                    "UPDATE tiendas SET activa=0, access_token='' WHERE store_id=:s"),
+                    {'s': str(payload['store_id'])})
+        return jsonify({'ok': True})
+
+    if evento != 'order/paid':
+        return jsonify({'ok': True, 'ignorado': evento})
+
+    tienda = tienda_por_store_id(payload.get('store_id', ''))
+    if not tienda or not tienda._mapping['activa']:
+        return jsonify({'ok': True, 'ignorado': 'tienda-desconocida'})
+
     order_id = payload.get('id')
-    r = req_lib.get(f'{tn_base()}/orders/{order_id}', headers=tn_headers())
+    r = req_lib.get(f'{tn_base(tienda)}/orders/{order_id}', headers=tn_headers(tienda))
     if r.status_code != 200:
         return jsonify({'error': f'no se pudo leer la orden ({r.status_code})'}), 500
-    resultado = _registrar_venta(r.json())
+    resultado = _registrar_venta(tienda, r.json())
     return jsonify({'ok': True, 'resultado': resultado})
 
 
 @app.route('/api/sync', methods=['POST'])
 def sync_manual():
     """Respaldo por si algún webhook se perdió: repasa pedidos pagos recientes."""
-    if not _es_admin():
+    tienda = tienda_actual()
+    if not tienda:
         return jsonify({'error': 'No autorizado'}), 401
-    if not tn_conectada():
-        return jsonify({'error': 'Tienda Nube no está conectada'}), 400
     dias = int(request.args.get('dias', 30))
     desde = (datetime.now() - timedelta(days=dias)).strftime('%Y-%m-%dT00:00:00')
     nuevos, page = 0, 1
     while True:
-        r = req_lib.get(f'{tn_base()}/orders', headers=tn_headers(), params={
+        r = req_lib.get(f'{tn_base(tienda)}/orders', headers=tn_headers(tienda), params={
             'payment_status': 'paid', 'created_at_min': desde,
             'per_page': 50, 'page': page})
         if r.status_code != 200:
@@ -301,127 +422,12 @@ def sync_manual():
         if not ordenes:
             break
         for o in ordenes:
-            if _registrar_venta(o) == 'registrada':
+            if _registrar_venta(tienda, o) == 'registrada':
                 nuevos += 1
         if len(ordenes) < 50:
             break
         page += 1
     return jsonify({'ok': True, 'nuevas': nuevos})
-
-
-@app.route('/api/debug/ordenes')
-def debug_ordenes():
-    """Muestra los pedidos crudos de TN para diagnosticar atribución."""
-    if not _es_admin():
-        return jsonify({'error': 'No autorizado'}), 401
-    dias = int(request.args.get('dias', 2))
-    desde = (datetime.now() - timedelta(days=dias)).strftime('%Y-%m-%dT00:00:00')
-    r = req_lib.get(f'{tn_base()}/orders', headers=tn_headers(),
-                    params={'created_at_min': desde, 'per_page': 20})
-    cfg = tn_config()
-    out = {'status': r.status_code, 'ordenes': [],
-           'store_id': cfg.get('store_id', ''),
-           'scopes_del_token': cfg.get('scope', '(desconocido: reconectar para capturarlo)')}
-    if r.status_code != 200:
-        out['detalle_error'] = r.text[:300]
-    # Sondas: probar GET /store con distintos User-Agent para aislar el bloqueo
-    out['probes'] = {}
-    cfg2 = tn_config()
-    uas = {
-        'ua_actual': TN_UA,
-        'ua_navegador': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36',
-        'ua_simple': 'CleantechAfiliados/1.0',
-    }
-    for nombre, ua in uas.items():
-        try:
-            rr = req_lib.get(f'{tn_base()}/store', headers={
-                'Authentication': f"bearer {cfg2.get('access_token', '')}",
-                'User-Agent': ua,
-                'Content-Type': 'application/json',
-            }, timeout=20)
-            es_html = 'html' in rr.headers.get('content-type', '')
-            out['probes'][nombre] = {
-                'status': rr.status_code,
-                'bloqueado_cf': es_html,
-                'body': '' if es_html else rr.text[:150],
-            }
-        except Exception as ex:
-            out['probes'][nombre] = {'error': str(ex)}
-    try:
-        data = r.json() if r.status_code == 200 else []
-        for o in (data if isinstance(data, list) else []):
-            out['ordenes'].append({
-                'id': o.get('id'), 'number': o.get('number'),
-                'payment_status': o.get('payment_status'),
-                'status': o.get('status'),
-                'total': o.get('total'),
-                'coupon': o.get('coupon'),
-                'promotional_discount': (o.get('promotional_discount') or {}).get('promotions_applied'),
-                'discount_coupon': o.get('discount_coupon'),
-                'landing_url': o.get('landing_url') or o.get('landing_site'),
-                'created_at': o.get('created_at'), 'paid_at': o.get('paid_at'),
-                'contact_name': o.get('contact_name'),
-            })
-        if not isinstance(data, list):
-            out['respuesta'] = data
-    except Exception as ex:
-        out['error'] = str(ex)
-    return jsonify(out)
-
-
-@app.route('/api/debug/atribucion')
-def debug_atribucion():
-    """Muestra los campos de tracking de los últimos pedidos para diagnosticar
-    la atribución por link (landing_url, utm, referral, etc.)."""
-    if not _es_admin():
-        return jsonify({'error': 'No autorizado'}), 401
-    dias = int(request.args.get('dias', 3))
-    desde = (datetime.now() - timedelta(days=dias)).strftime('%Y-%m-%dT00:00:00')
-    r = req_lib.get(f'{tn_base()}/orders', headers=tn_headers(),
-                    params={'created_at_min': desde, 'per_page': 10})
-    if r.status_code != 200:
-        return jsonify({'error': f'TN respondió {r.status_code}', 'detalle': r.text[:200]}), 500
-    out = []
-    for o in r.json():
-        out.append({
-            'numero': o.get('number'),
-            'pago': o.get('payment_status'),
-            'cupon': [c.get('code') for c in (o.get('coupon') or [])] if isinstance(o.get('coupon'), list)
-                     else (o.get('coupon') or {}).get('code'),
-            'landing_url': o.get('landing_url'),
-            'customer_visit': o.get('customer_visit'),
-            'storefront': o.get('storefront'),
-            'order_origin': o.get('order_origin'),
-            'extra': o.get('extra'),
-            'attributes': o.get('attributes'),
-        })
-    return jsonify(out)
-
-
-@app.route('/api/debug/limpiar-tienda', methods=['POST'])
-def limpiar_tienda():
-    """Borra de la tienda conectada SOLO lo que creó esta app:
-    su webhook order/paid y los cupones de prueba PRUEBACUPON*."""
-    if not _es_admin():
-        return jsonify({'error': 'No autorizado'}), 401
-    borrado = {'webhooks': [], 'cupones': [], 'tienda': ''}
-    r = req_lib.get(f'{tn_base()}/store', headers=tn_headers())
-    if r.status_code == 200:
-        borrado['tienda'] = (r.json().get('name') or {}).get('es', '')
-    destino = f'{APP_URL}/webhooks/tn'
-    r = req_lib.get(f'{tn_base()}/webhooks', headers=tn_headers())
-    if r.status_code == 200:
-        for w in r.json():
-            if w.get('url') == destino:
-                rr = req_lib.delete(f"{tn_base()}/webhooks/{w['id']}", headers=tn_headers())
-                borrado['webhooks'].append({'id': w['id'], 'status': rr.status_code})
-    r = req_lib.get(f'{tn_base()}/coupons', headers=tn_headers())
-    if r.status_code == 200:
-        for c in r.json():
-            if (c.get('code') or '').upper().startswith('PRUEBACUPON'):
-                rr = req_lib.delete(f"{tn_base()}/coupons/{c['id']}", headers=tn_headers())
-                borrado['cupones'].append({'code': c.get('code'), 'status': rr.status_code})
-    return jsonify(borrado)
 
 
 # ── Influencers ───────────────────────────────────────────────────────────────
@@ -430,15 +436,32 @@ def _slug(nombre):
     s = re.sub(r'[^a-z0-9]+', '-', nombre.lower().strip()).strip('-')
     return s or uuid.uuid4().hex[:8]
 
+def _link_influencer(tienda, slug):
+    url = (tienda._mapping['url'] or '').rstrip('/')
+    return f'{url}/?utm_source={slug}&utm_medium=afiliado'
+
 
 @app.route('/api/influencers', methods=['POST'])
 def crear_influencer():
-    if not _es_admin():
+    tienda = tienda_actual()
+    if not tienda:
         return jsonify({'error': 'No autorizado'}), 401
+    tid = tienda._mapping['id']
     d = request.json or {}
     nombre = (d.get('nombre') or '').strip()
     if not nombre:
         return jsonify({'error': 'Falta el nombre'}), 400
+
+    # Límite del plan gratuito
+    if (tienda._mapping['plan'] or 'free') == 'free':
+        with engine.connect() as conn:
+            n = conn.execute(text(
+                'SELECT COUNT(*) FROM influencers WHERE tienda_id=:t'),
+                {'t': tid}).fetchone()[0]
+        if n >= PLAN_FREE_MAX_INFLUENCERS:
+            return jsonify({'error': f'El plan gratuito incluye {PLAN_FREE_MAX_INFLUENCERS} influencer. '
+                                     'Pasate al plan Pro para agregar más.'}), 402
+
     slug = _slug(d.get('slug') or nombre)
     try:
         comision = float(d.get('comision_pct', COMISION_DEFAULT))
@@ -447,42 +470,41 @@ def crear_influencer():
         return jsonify({'error': 'Comisión o descuento inválido'}), 400
 
     with engine.connect() as conn:
-        if conn.execute(text('SELECT 1 FROM influencers WHERE slug=:s'), {'s': slug}).fetchone():
+        if conn.execute(text(
+                'SELECT 1 FROM influencers WHERE slug=:s AND tienda_id=:t'),
+                {'s': slug, 't': tid}).fetchone():
             return jsonify({'error': f'Ya existe un influencer con el código "{slug}"'}), 400
 
-    # Cupón en Tienda Nube (solo si el comprador recibe descuento)
     cupon = ''
     aviso_cupon = ''
     if descuento > 0:
         cupon = f"{re.sub(r'[^A-Z0-9]', '', slug.upper())[:12]}{int(descuento)}"
-        if tn_conectada():
-            r = req_lib.post(f'{tn_base()}/coupons', headers=tn_headers(), json={
-                'code': cupon, 'type': 'percentage',
-                'value': str(descuento), 'valid': True})
-            if r.status_code not in (200, 201):
-                aviso_cupon = f'No se pudo crear el cupón en Tienda Nube ({r.status_code}): {r.text[:200]}'
-        else:
-            aviso_cupon = 'Tienda Nube no está conectada: el cupón se definió pero hay que crearlo a mano.'
+        r = req_lib.post(f'{tn_base(tienda)}/coupons', headers=tn_headers(tienda), json={
+            'code': cupon, 'type': 'percentage',
+            'value': str(descuento), 'valid': True})
+        if r.status_code not in (200, 201):
+            aviso_cupon = f'No se pudo crear el cupón en Tienda Nube ({r.status_code}): {r.text[:200]}'
 
     token = uuid.uuid4().hex
     with engine.begin() as conn:
         conn.execute(text('''
-            INSERT INTO influencers (nombre, slug, instagram, email, alias_mp,
+            INSERT INTO influencers (tienda_id, nombre, slug, instagram, email, alias_mp,
                                      comision_pct, descuento_pct, cupon_codigo,
                                      token, activo, creado)
-            VALUES (:n, :s, :ig, :em, :mp, :c, :d, :cup, :tok, 1, :creado)
-        '''), {'n': nombre, 's': slug, 'ig': (d.get('instagram') or '').strip(),
+            VALUES (:t, :n, :s, :ig, :em, :mp, :c, :d, :cup, :tok, 1, :creado)
+        '''), {'t': tid, 'n': nombre, 's': slug, 'ig': (d.get('instagram') or '').strip(),
                'em': (d.get('email') or '').strip(), 'mp': (d.get('alias_mp') or '').strip(),
                'c': comision, 'd': descuento, 'cup': cupon, 'tok': token,
                'creado': _now()})
     return jsonify({'ok': True, 'slug': slug, 'cupon': cupon,
                     'aviso': aviso_cupon,
-                    'link': f'{TIENDA_URL}/?utm_source={slug}&utm_medium=afiliado'})
+                    'link': _link_influencer(tienda, slug)})
 
 
 @app.route('/api/influencers')
 def listar_influencers():
-    if not _es_admin():
+    tienda = tienda_actual()
+    if not tienda:
         return jsonify({'error': 'No autorizado'}), 401
     with engine.connect() as conn:
         rows = conn.execute(text('''
@@ -492,21 +514,29 @@ def listar_influencers():
                    COUNT(v.id) AS ventas_count
             FROM influencers i
             LEFT JOIN ventas v ON v.influencer_id = i.id
+            WHERE i.tienda_id = :t
             GROUP BY i.id
             ORDER BY i.nombre
-        ''')).fetchall()
+        '''), {'t': tienda._mapping['id']}).fetchall()
     out = []
     for r in rows:
         d = _row(r)
-        d['link'] = f"{TIENDA_URL}/?utm_source={d['slug']}&utm_medium=afiliado"
+        d['link'] = _link_influencer(tienda, d['slug'])
         d['panel'] = f"/i/{d['token']}"
         out.append(d)
     return jsonify(out)
 
 
+def _influencer_de_tienda(conn, iid, tienda_id):
+    return conn.execute(text(
+        'SELECT 1 FROM influencers WHERE id=:i AND tienda_id=:t'),
+        {'i': iid, 't': tienda_id}).fetchone()
+
+
 @app.route('/api/influencers/<int:iid>', methods=['PATCH'])
 def editar_influencer(iid):
-    if not _es_admin():
+    tienda = tienda_actual()
+    if not tienda:
         return jsonify({'error': 'No autorizado'}), 401
     d = request.json or {}
     campos = {}
@@ -525,71 +555,84 @@ def editar_influencer(iid):
         return jsonify({'error': 'Nada para actualizar'}), 400
     sets = ', '.join(f'{k}=:{k}' for k in campos)
     campos['id'] = iid
+    campos['tid'] = tienda._mapping['id']
     with engine.begin() as conn:
-        conn.execute(text(f'UPDATE influencers SET {sets} WHERE id=:id'), campos)
+        if not _influencer_de_tienda(conn, iid, campos['tid']):
+            return jsonify({'error': 'Influencer inexistente'}), 404
+        conn.execute(text(f'UPDATE influencers SET {sets} WHERE id=:id AND tienda_id=:tid'), campos)
     return jsonify({'ok': True})
 
 
 @app.route('/api/influencers/<int:iid>/liquidar', methods=['POST'])
 def liquidar(iid):
-    if not _es_admin():
+    tienda = tienda_actual()
+    if not tienda:
         return jsonify({'error': 'No autorizado'}), 401
+    tid = tienda._mapping['id']
     notas = (request.json or {}).get('notas', '')
     with engine.begin() as conn:
+        if not _influencer_de_tienda(conn, iid, tid):
+            return jsonify({'error': 'Influencer inexistente'}), 404
         row = conn.execute(text('''
             SELECT COALESCE(SUM(comision), 0) FROM ventas
-            WHERE influencer_id=:i AND estado='pendiente'
-        '''), {'i': iid}).fetchone()
+            WHERE influencer_id=:i AND tienda_id=:t AND estado='pendiente'
+        '''), {'i': iid, 't': tid}).fetchone()
         monto = float(row[0] or 0)
         if monto <= 0:
             return jsonify({'error': 'No hay comisiones pendientes'}), 400
         res = conn.execute(text(
-            'INSERT INTO liquidaciones (influencer_id, monto, fecha, notas) '
-            'VALUES (:i, :m, :f, :n)' + (' RETURNING id' if IS_PG else '')),
-            {'i': iid, 'm': monto, 'f': _now(), 'n': notas})
+            'INSERT INTO liquidaciones (tienda_id, influencer_id, monto, fecha, notas) '
+            'VALUES (:t, :i, :m, :f, :n)' + (' RETURNING id' if IS_PG else '')),
+            {'t': tid, 'i': iid, 'm': monto, 'f': _now(), 'n': notas})
         lid = res.fetchone()[0] if IS_PG else res.lastrowid
         conn.execute(text('''
             UPDATE ventas SET estado='liquidada', liquidacion_id=:l
-            WHERE influencer_id=:i AND estado='pendiente'
-        '''), {'l': lid, 'i': iid})
+            WHERE influencer_id=:i AND tienda_id=:t AND estado='pendiente'
+        '''), {'l': lid, 'i': iid, 't': tid})
     return jsonify({'ok': True, 'monto': monto})
 
 
 @app.route('/api/ventas')
 def listar_ventas():
-    if not _es_admin():
+    tienda = tienda_actual()
+    if not tienda:
         return jsonify({'error': 'No autorizado'}), 401
     with engine.connect() as conn:
         rows = conn.execute(text('''
             SELECT v.*, i.nombre AS influencer, i.slug
             FROM ventas v JOIN influencers i ON i.id = v.influencer_id
+            WHERE v.tienda_id = :t
             ORDER BY v.fecha DESC LIMIT 300
-        ''')).fetchall()
+        '''), {'t': tienda._mapping['id']}).fetchall()
     return jsonify([_row(r) for r in rows])
 
 
 @app.route('/api/ventas/<int:vid>', methods=['DELETE'])
 def borrar_venta(vid):
-    """Borra una venta atribuida (ej. pedidos de prueba o cancelados)."""
-    if not _es_admin():
+    tienda = tienda_actual()
+    if not tienda:
         return jsonify({'error': 'No autorizado'}), 401
     with engine.begin() as conn:
-        row = conn.execute(text('SELECT numero, estado FROM ventas WHERE id=:id'),
-                           {'id': vid}).fetchone()
+        row = conn.execute(text(
+            'SELECT numero, estado FROM ventas WHERE id=:id AND tienda_id=:t'),
+            {'id': vid, 't': tienda._mapping['id']}).fetchone()
         if not row:
             return jsonify({'error': 'Venta inexistente'}), 404
         if row[1] == 'liquidada':
             return jsonify({'error': 'Ya fue liquidada: borrarla desbalancearía las liquidaciones'}), 400
-        conn.execute(text('DELETE FROM ventas WHERE id=:id'), {'id': vid})
+        conn.execute(text('DELETE FROM ventas WHERE id=:id AND tienda_id=:t'),
+                     {'id': vid, 't': tienda._mapping['id']})
     return jsonify({'ok': True})
 
 
-# ── Ventas de prueba (para testear el circuito sin Tienda Nube) ──────────────
+# ── Ventas de prueba (para testear el circuito) ───────────────────────────────
 
 @app.route('/api/test/venta', methods=['POST'])
 def crear_venta_prueba():
-    if not _es_admin():
+    tienda = tienda_actual()
+    if not tienda:
         return jsonify({'error': 'No autorizado'}), 401
+    tid = tienda._mapping['id']
     d = request.json or {}
     iid = d.get('influencer_id')
     try:
@@ -597,7 +640,9 @@ def crear_venta_prueba():
     except (TypeError, ValueError):
         return jsonify({'error': 'Total inválido'}), 400
     with engine.connect() as conn:
-        inf = conn.execute(text('SELECT * FROM influencers WHERE id=:i'), {'i': iid}).fetchone()
+        inf = conn.execute(text(
+            'SELECT * FROM influencers WHERE id=:i AND tienda_id=:t'),
+            {'i': iid, 't': tid}).fetchone()
     if not inf:
         return jsonify({'error': 'Influencer inexistente'}), 400
     m = inf._mapping
@@ -605,12 +650,12 @@ def crear_venta_prueba():
     oid = f'TEST-{uuid.uuid4().hex[:8]}'
     with engine.begin() as conn:
         conn.execute(text('''
-            INSERT INTO ventas (order_id, numero, fecha, cliente, total,
+            INSERT INTO ventas (tienda_id, order_id, numero, fecha, cliente, total,
                                 influencer_id, atribucion, comision_pct,
                                 comision, estado, creado)
-            VALUES (:oid, :num, :f, 'Cliente de prueba', :tot, :inf, 'cupon',
+            VALUES (:tid, :oid, :num, :f, 'Cliente de prueba', :tot, :inf, 'cupon',
                     :pct, :com, 'pendiente', :creado)
-        '''), {'oid': oid, 'num': oid, 'f': _now(), 'tot': total,
+        '''), {'tid': tid, 'oid': oid, 'num': oid, 'f': _now(), 'tot': total,
                'inf': m['id'], 'pct': pct,
                'com': round(total * pct / 100, 2), 'creado': _now()})
     return jsonify({'ok': True, 'order_id': oid})
@@ -618,26 +663,65 @@ def crear_venta_prueba():
 
 @app.route('/api/test/ventas', methods=['DELETE'])
 def borrar_ventas_prueba():
-    if not _es_admin():
+    tienda = tienda_actual()
+    if not tienda:
         return jsonify({'error': 'No autorizado'}), 401
     with engine.begin() as conn:
-        n = conn.execute(text("DELETE FROM ventas WHERE order_id LIKE 'TEST-%'")).rowcount
+        n = conn.execute(text(
+            "DELETE FROM ventas WHERE order_id LIKE 'TEST-%' AND tienda_id=:t"),
+            {'t': tienda._mapping['id']}).rowcount
     return jsonify({'ok': True, 'borradas': n})
+
+
+# ── Superadmin (dueño de ReferidosApp) ────────────────────────────────────────
+
+@app.route('/api/superadmin/tiendas')
+def superadmin_tiendas():
+    if not _es_superadmin():
+        return jsonify({'error': 'No autorizado'}), 401
+    with engine.connect() as conn:
+        rows = conn.execute(text('''
+            SELECT t.id, t.store_id, t.nombre, t.url, t.email, t.plan, t.activa,
+                   t.clave_admin, t.creado,
+                   (SELECT COUNT(*) FROM influencers i WHERE i.tienda_id = t.id) AS influencers,
+                   (SELECT COUNT(*) FROM ventas v WHERE v.tienda_id = t.id) AS ventas
+            FROM tiendas t ORDER BY t.id
+        ''')).fetchall()
+    return jsonify([_row(r) for r in rows])
+
+
+@app.route('/api/superadmin/tiendas/<int:tid>/plan', methods=['PATCH'])
+def superadmin_cambiar_plan(tid):
+    if not _es_superadmin():
+        return jsonify({'error': 'No autorizado'}), 401
+    plan = (request.json or {}).get('plan', '')
+    if plan not in ('free', 'pro'):
+        return jsonify({'error': 'Plan inválido (free|pro)'}), 400
+    with engine.begin() as conn:
+        conn.execute(text('UPDATE tiendas SET plan=:p WHERE id=:id'),
+                     {'p': plan, 'id': tid})
+    return jsonify({'ok': True})
 
 
 # ── Vistas ────────────────────────────────────────────────────────────────────
 
 @app.route('/')
 def home():
-    return render_template('index.html', tienda=TIENDA_URL)
+    return render_template('index.html')
 
 
 @app.route('/admin')
 def admin():
-    if not _es_admin():
-        return 'No autorizado. Agregá ?clave=... a la URL.', 401
-    return render_template('admin.html', clave=ADMIN_KEY,
-                           tn_conectada=tn_conectada(), tienda=TIENDA_URL,
+    tienda = tienda_actual()
+    if not tienda:
+        return 'No autorizado. Ingresá con el link de admin de tu tienda.', 401
+    m = tienda._mapping
+    return render_template('admin.html',
+                           clave=m['clave_admin'],
+                           tienda_nombre=m['nombre'] or m['url'] or 'tu tienda',
+                           tienda_url=m['url'],
+                           plan=m['plan'],
+                           max_free=PLAN_FREE_MAX_INFLUENCERS,
                            comision_default=COMISION_DEFAULT)
 
 
@@ -648,6 +732,8 @@ def panel_influencer(token):
                            {'t': token}).fetchone()
         if not inf:
             return 'Link inválido.', 404
+        tienda = conn.execute(text('SELECT * FROM tiendas WHERE id=:t'),
+                              {'t': inf._mapping['tienda_id']}).fetchone()
         ventas = conn.execute(text('''
             SELECT fecha, numero, total, comision, estado FROM ventas
             WHERE influencer_id=:i ORDER BY fecha DESC LIMIT 200
@@ -657,16 +743,19 @@ def panel_influencer(token):
             WHERE influencer_id=:i ORDER BY fecha DESC
         '''), {'i': inf._mapping['id']}).fetchall()
     m = inf._mapping
+    t = tienda._mapping if tienda else {}
     pendiente = sum(v._mapping['comision'] for v in ventas
                     if v._mapping['estado'] == 'pendiente')
     return render_template('influencer.html',
                            inf=dict(m), ventas=[_row(v) for v in ventas],
                            liquidaciones=[_row(l) for l in liqs],
-                           pendiente=pendiente, tienda=TIENDA_URL,
-                           link=f"{TIENDA_URL}/?utm_source={m['slug']}&utm_medium=afiliado")
+                           pendiente=pendiente,
+                           tienda_nombre=t.get('nombre') or 'la tienda',
+                           tienda=t.get('url') or '',
+                           link=_link_influencer(tienda, m['slug']) if tienda else '')
 
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5003))
-    print(f'\n  Afiliados Cleantech corriendo en: http://localhost:{port}\n')
+    print(f'\n  ReferidosApp corriendo en: http://localhost:{port}\n')
     app.run(debug=False, host='0.0.0.0', port=port)
