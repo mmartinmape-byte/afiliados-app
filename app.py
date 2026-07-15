@@ -261,25 +261,42 @@ def tn_callback():
             '''), {'s': store_id, 't': token, 'clave': uuid.uuid4().hex, 'cr': _now()})
         tienda = tienda_por_store_id(store_id)
 
-    # Completar nombre/URL/email desde la API de la tienda
-    try:
-        rs = req_lib.get(f'{tn_base(tienda)}/store', headers=tn_headers(tienda), timeout=20)
-        if rs.status_code == 200:
-            s = rs.json()
-            nombre = (s.get('name') or {}).get('es') or (s.get('name') or {}).get('pt') or ''
-            url = (s.get('url_with_brand') or '').rstrip('/')
-            email = s.get('email') or ''
-            with engine.begin() as conn:
-                conn.execute(text(
-                    'UPDATE tiendas SET nombre=COALESCE(NULLIF(:n, \'\'), nombre), '
-                    'url=COALESCE(NULLIF(:u, \'\'), url), email=:e WHERE store_id=:s'),
-                    {'n': nombre, 'u': url, 'e': email, 's': store_id})
-        tienda = tienda_por_store_id(store_id)
-    except Exception as ex:
-        print(f'  Aviso: no se pudo leer /store al instalar ({ex})')
-
+    tienda = _refrescar_datos_tienda(tienda)
     _registrar_webhook(tienda)
     return redirect(f"/admin?clave={tienda._mapping['clave_admin']}&bienvenida=1")
+
+
+def _refrescar_datos_tienda(tienda):
+    """Completa nombre/URL/email de la tienda desde la API de TN, con varios
+    campos de respaldo para el dominio (las tiendas demo no siempre traen
+    url_with_brand). Devuelve la fila actualizada."""
+    store_id = tienda._mapping['store_id']
+    try:
+        rs = req_lib.get(f'{tn_base(tienda)}/store', headers=tn_headers(tienda), timeout=20)
+        if rs.status_code != 200:
+            return tienda
+        s = rs.json()
+        nombres = s.get('name') or {}
+        nombre = (nombres.get('es') or nombres.get('pt') or nombres.get('en') or '').strip()
+        url = (s.get('url_with_brand') or '').strip().rstrip('/')
+        if not url:
+            dominio = s.get('original_domain') or ''
+            if not dominio:
+                doms = s.get('domains') or []
+                dominio = doms[0] if doms and isinstance(doms[0], str) else ''
+            if dominio:
+                url = f'https://{dominio}'.rstrip('/')
+        email = (s.get('email') or '').strip()
+        with engine.begin() as conn:
+            conn.execute(text(
+                'UPDATE tiendas SET nombre=COALESCE(NULLIF(:n, \'\'), nombre), '
+                'url=COALESCE(NULLIF(:u, \'\'), url), '
+                'email=COALESCE(NULLIF(:e, \'\'), email) WHERE store_id=:s'),
+                {'n': nombre, 'u': url, 'e': email, 's': store_id})
+        return tienda_por_store_id(store_id)
+    except Exception as ex:
+        print(f'  Aviso: no se pudo refrescar datos de la tienda {store_id} ({ex})')
+        return tienda
 
 
 def _registrar_webhook(tienda):
@@ -516,6 +533,8 @@ def listar_influencers():
     tienda = tienda_actual()
     if not tienda:
         return jsonify({'error': 'No autorizado'}), 401
+    if not (tienda._mapping['url'] or '').strip():
+        tienda = _refrescar_datos_tienda(tienda)
     with engine.connect() as conn:
         rows = conn.execute(text('''
             SELECT i.*,
@@ -725,6 +744,8 @@ def admin():
     tienda = tienda_actual()
     if not tienda:
         return 'No autorizado. Ingresá con el link de admin de tu tienda.', 401
+    if not (tienda._mapping['url'] or '').strip():
+        tienda = _refrescar_datos_tienda(tienda)  # auto-reparación del dominio
     m = tienda._mapping
     return render_template('admin.html',
                            clave=m['clave_admin'],
