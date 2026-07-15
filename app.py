@@ -218,6 +218,16 @@ def tn_base(tienda):
     return f"https://api.tiendanube.com/v1/{tienda._mapping['store_id']}"
 
 
+@app.route('/entrar')
+def entrar():
+    """Re-ingreso al admin: manda a autorizar en TN (instantáneo si la app ya
+    está instalada) y el callback redirige al admin de la tienda logueada.
+    Es la URL para poner como "Página de la aplicación" en el Portal de Socios."""
+    if not TN_CLIENT_ID:
+        return 'App no configurada.', 500
+    return redirect(f'https://www.tiendanube.com/apps/{TN_CLIENT_ID}/authorize')
+
+
 @app.route('/tn/callback')
 def tn_callback():
     """Alta/reconexión automática: cualquier tienda que instala la app."""

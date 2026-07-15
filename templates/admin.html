@@ -47,6 +47,25 @@ small{color:var(--g400)}
 </header>
 <main>
 
+<div class="card" id="bienvenida" style="display:none;border:2px solid var(--verde);background:linear-gradient(135deg,#eef2ff,#fff)">
+  <h2 style="font-size:1.15rem">🎉 ¡Bienvenido a ReferidosApp!</h2>
+  <p style="font-size:.9rem;color:var(--g600);line-height:1.6;margin:.6rem 0 1rem">
+    Ya está todo conectado con tu tienda. Así funciona:<br/>
+    <strong>1.</strong> Creás un influencer acá abajo → la app le genera su <strong>cupón de descuento</strong> y su <strong>link de tracking</strong>.<br/>
+    <strong>2.</strong> Le compartís esas dos cosas (y su panel privado, para que siga sus ventas).<br/>
+    <strong>3.</strong> Cada pedido pago que llegue con su cupón o su link le acredita la comisión <strong>automáticamente</strong>. Vos liquidás cuando quieras con un click.
+  </p>
+  <div style="background:#fff;border:1.5px solid var(--g200);border-radius:10px;padding:.8rem 1rem;margin-bottom:1rem">
+    <div style="font-size:.72rem;font-weight:700;color:var(--g400);text-transform:uppercase;letter-spacing:.5px">🔑 Tu link de acceso a este panel — guardalo en favoritos</div>
+    <div style="display:flex;gap:.6rem;align-items:center;margin-top:.35rem">
+      <span class="mono" id="link-acceso" style="word-break:break-all"></span>
+      <button class="btn btn-p" style="white-space:nowrap" onclick="copiar(document.getElementById('link-acceso').textContent)">Copiar</button>
+    </div>
+    <div style="font-size:.75rem;color:var(--g400);margin-top:.4rem">También podés volver siempre desde "Mis aplicaciones" en tu admin de Tienda Nube.</div>
+  </div>
+  <button class="btn btn-g" onclick="document.getElementById('bienvenida').style.display='none'">Entendido, empezar ✓</button>
+</div>
+
 <div class="card">
   <h2>Nuevo influencer</h2>
   <div class="grid">
@@ -114,7 +133,11 @@ async function cargar() {
         <button class="btn btn-g" onclick="toggleActivo(${i.id}, ${i.activo})">${i.activo ? 'Pausar' : 'Activar'}</button>
         <button class="btn btn-g" onclick="ventaPrueba(${i.id})" title="Simula una venta para probar el circuito">🧪</button>
       </td>
-    </tr>`).join('') || '<tr><td colspan="9" style="text-align:center;padding:1.5rem;color:var(--g400)">Todavía no hay influencers.</td></tr>';
+    </tr>`).join('') || `<tr><td colspan="9" style="text-align:center;padding:2rem;color:var(--g400)">
+      <div style="font-size:2rem;margin-bottom:.4rem">👆</div>
+      <strong style="color:var(--g600)">Creá tu primer influencer con el formulario de arriba</strong><br/>
+      <span style="font-size:.82rem">Solo necesitás su nombre — la app le genera el cupón, el link de venta y su panel privado al instante.</span>
+    </td></tr>`;
 
   const ventas = await api('/api/ventas');
   document.getElementById('tb-ventas').innerHTML = ventas.map(v => `
@@ -197,6 +220,13 @@ async function syncManual() {
 }
 
 cargar();
+
+// Bienvenida post-instalación
+if (new URLSearchParams(location.search).get('bienvenida') === '1') {
+  document.getElementById('bienvenida').style.display = 'block';
+  document.getElementById('link-acceso').textContent =
+    location.origin + '/admin?clave=' + CLAVE;
+}
 </script>
 </body>
 </html>
