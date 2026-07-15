@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Plan Pro — ReferidosApp</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:system-ui,-apple-system,sans-serif;background:#f5f5fa;color:#27272a;display:flex;align-items:center;justify-content:center;min-height:100vh;padding:1rem}
+.card{background:#fff;border-radius:16px;box-shadow:0 4px 20px rgba(0,0,0,.08);max-width:760px;width:100%;overflow:hidden}
+.head{background:linear-gradient(135deg,#4338ca,#6366f1);color:#fff;padding:1.6rem 2rem}
+.head h1{font-size:1.3rem}
+.head p{opacity:.85;font-size:.85rem;margin-top:.2rem}
+.body{padding:2rem;display:grid;grid-template-columns:1fr 1fr;gap:1.2rem}
+.plan{border:1.5px solid #e5e7eb;border-radius:14px;padding:1.4rem}
+.plan.pro{border-color:#6366f1;box-shadow:0 4px 16px rgba(99,102,241,.15);position:relative}
+.plan h2{font-size:1rem;color:#4338ca}
+.precio{font-size:1.7rem;font-weight:800;margin:.5rem 0}
+.precio small{font-size:.8rem;font-weight:400;color:#9ca3af}
+ul{list-style:none;font-size:.86rem;color:#4b5563;line-height:2}
+li::before{content:'✓ ';color:#16a34a;font-weight:700}
+li.no::before{content:'✗ ';color:#d1d5db}
+.btn{display:block;text-align:center;margin-top:1rem;padding:.8rem;border-radius:10px;font-weight:700;text-decoration:none;font-size:.9rem}
+.btn-pro{background:#6366f1;color:#fff}
+.btn-actual{background:#f3f4f6;color:#9ca3af;pointer-events:none}
+.pie{grid-column:1/-1;font-size:.78rem;color:#9ca3af;text-align:center;line-height:1.6}
+.volver{display:inline-block;margin:1rem 2rem;font-size:.85rem;color:#6366f1;text-decoration:none}
+@media(max-width:640px){.body{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="head">
+    <h1>🤝 Planes de ReferidosApp</h1>
+    <p>{{ tienda_nombre }} · Plan actual: {{ 'Pro' if plan == 'pro' else 'Free' }}</p>
+  </div>
+  <div class="body">
+    <div class="plan">
+      <h2>Free</h2>
+      <div class="precio">$0 <small>para siempre</small></div>
+      <ul>
+        <li>{{ max_free }} influencer</li>
+        <li>Cupón y link de tracking</li>
+        <li>Comisiones automáticas</li>
+        <li>Panel para el influencer</li>
+        <li class="no">Influencers ilimitados</li>
+      </ul>
+      <span class="btn btn-actual">{{ 'Tu plan actual' if plan == 'free' else 'Plan básico' }}</span>
+    </div>
+    <div class="plan pro">
+      <h2>Pro ⭐</h2>
+      <div class="precio">{{ precio }}</div>
+      <ul>
+        <li><strong>Influencers ilimitados</strong></li>
+        <li>Cupón y link de tracking</li>
+        <li>Comisiones automáticas</li>
+        <li>Panel para cada influencer</li>
+        <li>Liquidaciones con un click</li>
+      </ul>
+      {% if plan == 'pro' %}
+        <span class="btn btn-actual">Tu plan actual ✓</span>
+      {% elif link_pago %}
+        <a class="btn btn-pro" href="{{ link_pago }}" target="_blank">Suscribirme al plan Pro</a>
+      {% else %}
+        <a class="btn btn-pro" href="mailto:{{ soporte }}?subject=Quiero el plan Pro de ReferidosApp ({{ tienda_nombre }})">Quiero el plan Pro</a>
+      {% endif %}
+    </div>
+    <div class="pie">
+      {% if plan != 'pro' %}
+      Al suscribirte, tu plan se activa dentro de las 24 hs (te avisamos por email).<br/>
+      {% endif %}
+      ¿Dudas? Escribinos a {{ soporte }} — respondemos rápido 😊
+    </div>
+  </div>
+  <a class="volver" href="/admin?clave={{ clave }}">← Volver al panel</a>
+</div>
+</body>
+</html>

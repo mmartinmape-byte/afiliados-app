@@ -37,7 +37,7 @@ small{color:var(--g400)}
   <h1 style="display:flex;align-items:center;gap:.6rem">🤝 ReferidosApp <span style="font-weight:400;opacity:.7;font-size:.85rem">· {{ tienda_nombre }}</span></h1>
   <div>
     {% if plan == 'free' %}
-      <span class="badge" style="background:#fef3c7;color:#92400e" title="Hasta {{ max_free }} influencer. Pasate a Pro para ilimitados.">Plan Free</span>
+      <a class="badge" style="background:#fef3c7;color:#92400e;text-decoration:none" href="/upgrade?clave={{ clave }}" title="Hasta {{ max_free }} influencer. Pasate a Pro para ilimitados.">Plan Free · Pasate a Pro ⭐</a>
     {% else %}
       <span class="badge b-ok">Plan Pro</span>
     {% endif %}
@@ -166,7 +166,13 @@ async function crearInfluencer() {
     descuento_pct: document.getElementById('f-descuento').value,
   };
   const r = await api('/api/influencers', {method:'POST', body: JSON.stringify(body)});
-  if (r.error) return alert('❌ ' + r.error);
+  if (r.error) {
+    if (r.error.includes('plan gratuito') && confirm(r.error + '\n\n¿Querés ver el plan Pro?')) {
+      location.href = '/upgrade?clave=' + CLAVE;
+      return;
+    }
+    return alert('❌ ' + r.error);
+  }
   let msg = `✅ Influencer creado.\n\nLink: ${r.link}`;
   if (r.cupon) msg += `\nCupón: ${r.cupon}`;
   if (r.aviso) msg += `\n\n⚠️ ${r.aviso}`;

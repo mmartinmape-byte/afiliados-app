@@ -25,6 +25,11 @@ COMISION_DEFAULT = float(os.environ.get('COMISION_DEFAULT', '10'))
 # Ojo: paréntesis/espacios en el User-Agent disparan el WAF de Cloudflare de TN
 TN_UA            = 'ReferidosApp/1.0'
 PLAN_FREE_MAX_INFLUENCERS = 1
+# Cobro del plan Pro (Fase 3 MVP): link de suscripción de Mercado Pago.
+# Cuando TN habilite su Billing API, esto migra a cobro nativo del App Store.
+PRO_PRECIO_TXT   = os.environ.get('PRO_PRECIO_TXT', 'USD 12/mes')
+PRO_LINK_PAGO    = os.environ.get('PRO_LINK_PAGO', '')  # link de suscripción MP
+SOPORTE_EMAIL    = os.environ.get('SOPORTE_EMAIL', 'mmartinmape@gmail.com')
 
 # URL de la tienda Cleantech para la migración inicial (con www: la redirección
 # sin www descarta los parámetros utm y rompe la atribución por link)
@@ -754,6 +759,22 @@ def admin():
                            plan=m['plan'],
                            max_free=PLAN_FREE_MAX_INFLUENCERS,
                            comision_default=COMISION_DEFAULT)
+
+
+@app.route('/upgrade')
+def upgrade():
+    tienda = tienda_actual()
+    if not tienda:
+        return 'No autorizado.', 401
+    m = tienda._mapping
+    return render_template('upgrade.html',
+                           clave=m['clave_admin'],
+                           tienda_nombre=m['nombre'] or 'tu tienda',
+                           plan=m['plan'],
+                           precio=PRO_PRECIO_TXT,
+                           link_pago=PRO_LINK_PAGO,
+                           soporte=SOPORTE_EMAIL,
+                           max_free=PLAN_FREE_MAX_INFLUENCERS)
 
 
 @app.route('/i/<token>')
