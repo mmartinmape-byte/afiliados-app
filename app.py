@@ -222,6 +222,10 @@ def tn_headers(tienda):
 def tn_base(tienda):
     return f"https://api.tiendanube.com/v1/{tienda._mapping['store_id']}"
 
+def tn_base_billing(tienda):
+    # Los endpoints de Billing existen solo desde la versión 2025-03 de la API
+    return f"https://api.tiendanube.com/2025-03/{tienda._mapping['store_id']}"
+
 
 @app.route('/entrar')
 def entrar():
@@ -735,6 +739,39 @@ def superadmin_cambiar_plan(tid):
         conn.execute(text('UPDATE tiendas SET plan=:p WHERE id=:id'),
                      {'p': plan, 'id': tid})
     return jsonify({'ok': True})
+
+
+# ── Billing API (sondeo para descubrir la forma exacta de los endpoints) ─────
+
+@app.route('/api/superadmin/billing-debug')
+def billing_debug():
+    """Prueba los endpoints de Billing contra una tienda para confirmar
+    concept_code, auth y formas de request antes de integrar en serio."""
+    if not _es_superadmin():
+        return jsonify({'error': 'No autorizado'}), 401
+    store = request.args.get('tienda', '')
+    tienda = tienda_por_store_id(store)
+    if not tienda:
+        return jsonify({'error': f'No hay tienda con store_id {store}'}), 404
+    out = {'store_id': store, 'app_id': TN_CLIENT_ID, 'probes': {}}
+    rutas = [
+        ('subs_concepto_apps', f'{tn_base_billing(tienda)}/concepts/apps/services/{TN_CLIENT_ID}/subscriptions'),
+        ('subs_concepto_app', f'{tn_base_billing(tienda)}/concepts/app/services/{TN_CLIENT_ID}/subscriptions'),
+        ('subs_sin_concepto', f'{tn_base_billing(tienda)}/services/{TN_CLIENT_ID}/subscriptions'),
+        ('plans', f'{tn_base_billing(tienda)}/plans'),
+        ('apps_plans', f'{tn_base_billing(tienda)}/apps/plans'),
+    ]
+    for nombre, url in rutas:
+        try:
+            r = req_lib.get(url, headers=tn_headers(tienda), timeout=20)
+            es_html = 'html' in r.headers.get('content-type', '')
+            out['probes'][nombre] = {
+                'url': url, 'status': r.status_code,
+                'body': '(html/bloqueado)' if es_html else r.text[:400],
+            }
+        except Exception as ex:
+            out['probes'][nombre] = {'url': url, 'error': str(ex)}
+    return jsonify(out)
 
 
 # ── Vistas ────────────────────────────────────────────────────────────────────
