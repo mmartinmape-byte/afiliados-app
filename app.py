@@ -713,6 +713,13 @@ def borrar_ventas_prueba():
 
 # ── Superadmin (dueño de ReferidosApp) ────────────────────────────────────────
 
+@app.route('/superadmin')
+def superadmin():
+    if not _es_superadmin():
+        return 'No autorizado.', 401
+    return render_template('superadmin.html', clave=SUPERADMIN_KEY)
+
+
 @app.route('/api/superadmin/tiendas')
 def superadmin_tiendas():
     if not _es_superadmin():

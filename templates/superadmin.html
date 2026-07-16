@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Superadmin — ReferidosApp</title>
+<style>
+:root{--ind:#6366f1;--ind-dk:#4338ca;--g50:#f5f5fa;--g200:#e5e7eb;--g400:#9ca3af;--g600:#4b5563;--g900:#27272a;--sh:0 1px 3px rgba(0,0,0,.08)}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:system-ui,-apple-system,sans-serif;background:var(--g50);color:var(--g900)}
+header{background:var(--ind-dk);color:#fff;padding:1rem 1.5rem;display:flex;justify-content:space-between;align-items:center}
+header h1{font-size:1.1rem}
+main{max-width:1200px;margin:0 auto;padding:1.5rem}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:1rem;margin-bottom:1.4rem}
+.stat{background:#fff;border-radius:12px;box-shadow:var(--sh);padding:1rem 1.2rem}
+.stat .lbl{font-size:.7rem;font-weight:700;color:var(--g400);text-transform:uppercase;letter-spacing:.5px}
+.stat .val{font-size:1.6rem;font-weight:800;color:var(--ind-dk);margin-top:.2rem}
+.card{background:#fff;border-radius:14px;box-shadow:var(--sh);padding:1.4rem}
+table{width:100%;border-collapse:collapse;font-size:.85rem}
+th{text-align:left;padding:.5rem .6rem;font-size:.68rem;text-transform:uppercase;letter-spacing:.5px;color:var(--g400);border-bottom:1px solid var(--g200)}
+td{padding:.6rem;border-bottom:1px solid var(--g200);color:var(--g600)}
+tr:last-child td{border-bottom:none}
+.badge{padding:2px 9px;border-radius:20px;font-size:.72rem;font-weight:600}
+.b-pro{background:#d1fae5;color:#065f46}
+.b-free{background:#fef3c7;color:#92400e}
+.b-off{background:#fee2e2;color:#991b1b}
+.btn{border:none;border-radius:8px;padding:.4rem .8rem;font-size:.78rem;cursor:pointer;font-family:inherit;background:#fff;border:1.5px solid var(--g200);color:var(--g600)}
+.btn:hover{border-color:var(--ind)}
+a{color:var(--ind)}
+.mono{font-family:ui-monospace,monospace;font-size:.75rem}
+</style>
+</head>
+<body>
+<header>
+  <h1>🛠 Superadmin · ReferidosApp</h1>
+  <span style="font-size:.8rem;opacity:.7">Solo para vos — no compartir esta URL</span>
+</header>
+<main>
+  <div class="stats" id="stats"></div>
+  <div class="card">
+    <h2 style="font-size:1rem;color:var(--ind-dk);margin-bottom:1rem">Tiendas instaladas</h2>
+    <div style="overflow-x:auto">
+    <table>
+      <thead><tr>
+        <th>Tienda</th><th>Plan</th><th>Estado</th><th style="text-align:center">Influencers</th>
+        <th style="text-align:center">Ventas</th><th>Instalada</th><th>Acciones</th>
+      </tr></thead>
+      <tbody id="tb"></tbody>
+    </table>
+    </div>
+  </div>
+</main>
+<script>
+const CLAVE = {{ clave|tojson }};
+
+async function cargar() {
+  const ts = await (await fetch('/api/superadmin/tiendas?clave=' + CLAVE)).json();
+  const activas = ts.filter(t => t.activa);
+  const pro = activas.filter(t => t.plan === 'pro');
+  document.getElementById('stats').innerHTML = `
+    <div class="stat"><div class="lbl">Tiendas activas</div><div class="val">${activas.length}</div></div>
+    <div class="stat"><div class="lbl">Plan Pro</div><div class="val">${pro.length}</div></div>
+    <div class="stat"><div class="lbl">Influencers totales</div><div class="val">${ts.reduce((a, t) => a + t.influencers, 0)}</div></div>
+    <div class="stat"><div class="lbl">Ventas atribuidas</div><div class="val">${ts.reduce((a, t) => a + t.ventas, 0)}</div></div>`;
+  document.getElementById('tb').innerHTML = ts.map(t => `
+    <tr style="${t.activa ? '' : 'opacity:.5'}">
+      <td>
+        <strong>${t.nombre || '(sin nombre)'}</strong><br>
+        <a href="${t.url}" target="_blank" style="font-size:.75rem">${(t.url || '').replace('https://', '')}</a>
+        <span class="mono" style="color:var(--g400)"> · ${t.store_id}</span>
+      </td>
+      <td><span class="badge ${t.plan === 'pro' ? 'b-pro' : 'b-free'}">${t.plan}</span></td>
+      <td>${t.activa ? '🟢' : '<span class="badge b-off">desinstalada</span>'}</td>
+      <td style="text-align:center">${t.influencers}</td>
+      <td style="text-align:center">${t.ventas}</td>
+      <td>${(t.creado || '').slice(0, 10)}</td>
+      <td style="white-space:nowrap">
+        <button class="btn" onclick="cambiarPlan(${t.id}, '${t.plan === 'pro' ? 'free' : 'pro'}', '${(t.nombre || '').replace(/'/g, '')}')">
+          ${t.plan === 'pro' ? 'Bajar a Free' : 'Subir a Pro ⭐'}
+        </button>
+        <button class="btn" onclick="copiarAdmin('${t.clave_admin}')" title="Copiar el link de admin de esta tienda">🔑</button>
+      </td>
+    </tr>`).join('');
+}
+
+async function cambiarPlan(id, plan, nombre) {
+  if (!confirm(`¿Pasar "${nombre}" al plan ${plan.toUpperCase()}?`)) return;
+  const r = await fetch(`/api/superadmin/tiendas/${id}/plan?clave=${CLAVE}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ plan })
+  });
+  const j = await r.json();
+  if (j.error) return alert('❌ ' + j.error);
+  cargar();
+}
+
+function copiarAdmin(clave) {
+  navigator.clipboard.writeText(location.origin + '/admin?clave=' + clave);
+  alert('Link de admin de la tienda copiado.');
+}
+
+cargar();
+</script>
+</body>
+</html>
