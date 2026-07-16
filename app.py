@@ -800,6 +800,48 @@ def admin():
                            comision_default=COMISION_DEFAULT)
 
 
+@app.route('/privacidad')
+def privacidad():
+    contenido = f'''
+<h1>Política de privacidad</h1>
+<p>ReferidosApp es una aplicación para tiendas de la plataforma Tienda Nube que permite gestionar programas de afiliados e influencers. Esta política describe qué datos tratamos y cómo.</p>
+<h2>Datos que tratamos</h2>
+<ul>
+<li><strong>Datos de la tienda:</strong> al instalar la app recibimos el identificador de la tienda, su nombre, dominio y email de contacto, junto con un token de acceso otorgado por Tienda Nube.</li>
+<li><strong>Datos de influencers:</strong> los que el comerciante carga voluntariamente (nombre, Instagram, email, alias de pago, comisión).</li>
+<li><strong>Datos de pedidos:</strong> para atribuir ventas leemos de cada pedido pago su número, total, cupón utilizado, origen de la visita y nombre del comprador. No almacenamos direcciones, teléfonos ni datos de pago de los compradores.</li>
+</ul>
+<h2>Uso de los datos</h2>
+<p>Los datos se usan exclusivamente para el funcionamiento de la app: atribuir ventas a influencers, calcular comisiones y mostrar paneles a la tienda y a sus influencers. No vendemos ni compartimos datos con terceros.</p>
+<h2>Almacenamiento y seguridad</h2>
+<p>Los datos se almacenan en infraestructura cloud con acceso restringido y cifrado en tránsito. Cada tienda accede únicamente a sus propios datos.</p>
+<h2>Baja y eliminación</h2>
+<p>Al desinstalar la app, la tienda queda desactivada y dejamos de recibir sus datos. Ante una solicitud de eliminación (propia de la tienda o vía los webhooks de privacidad de Tienda Nube), los datos asociados se eliminan de forma permanente.</p>
+<h2>Contacto</h2>
+<p>Por consultas sobre esta política: <a href="mailto:{SOPORTE_EMAIL}">{SOPORTE_EMAIL}</a></p>
+'''
+    return render_template('legal.html', titulo='Política de privacidad', contenido=contenido)
+
+
+@app.route('/soporte')
+def soporte():
+    contenido = f'''
+<h1>Soporte de ReferidosApp</h1>
+<p>¿Necesitás ayuda con la app? Estamos para ayudarte.</p>
+<h2>Canales de contacto</h2>
+<ul>
+<li><strong>Email:</strong> <a href="mailto:{SOPORTE_EMAIL}">{SOPORTE_EMAIL}</a> — respondemos dentro de las 24 hs hábiles.</li>
+</ul>
+<h2>Preguntas frecuentes</h2>
+<ul>
+<li><strong>No encuentro mi link de acceso al panel:</strong> entrá a tu admin de Tienda Nube → Mis aplicaciones → ReferidosApp, y volvés a tu panel automáticamente.</li>
+<li><strong>Una venta no se atribuyó:</strong> verificá que el pedido figure como pagado y que se haya usado el cupón o el link del influencer. La sincronización manual del panel repasa los últimos 30 días.</li>
+<li><strong>Quiero cambiar de plan:</strong> desde tu panel, en el botón del plan (arriba a la derecha).</li>
+</ul>
+'''
+    return render_template('legal.html', titulo='Soporte', contenido=contenido)
+
+
 @app.route('/upgrade')
 def upgrade():
     tienda = tienda_actual()

@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>{{ titulo }} — ReferidosApp</title>
+<style>
+body{font-family:system-ui,-apple-system,sans-serif;background:#f5f5fa;color:#27272a;margin:0;padding:2rem 1rem}
+.card{background:#fff;border-radius:16px;box-shadow:0 4px 20px rgba(0,0,0,.06);max-width:760px;margin:0 auto;padding:2.5rem}
+h1{color:#4338ca;font-size:1.4rem;margin-top:0}
+h2{font-size:1rem;color:#27272a;margin-top:1.6rem}
+p,li{font-size:.9rem;color:#4b5563;line-height:1.7}
+a{color:#6366f1}
+.pie{text-align:center;font-size:.78rem;color:#9ca3af;margin-top:1.5rem}
+</style>
+</head>
+<body>
+<div class="card">
+{{ contenido | safe }}
+</div>
+<div class="pie">ReferidosApp · Programa de afiliados para Tienda Nube</div>
+</body>
+</html>
