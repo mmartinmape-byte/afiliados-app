@@ -754,13 +754,15 @@ def billing_debug():
     if not tienda:
         return jsonify({'error': f'No hay tienda con store_id {store}'}), 404
     out = {'store_id': store, 'app_id': TN_CLIENT_ID, 'probes': {}}
-    rutas = [
-        ('subs_concepto_apps', f'{tn_base_billing(tienda)}/concepts/apps/services/{TN_CLIENT_ID}/subscriptions'),
-        ('subs_concepto_app', f'{tn_base_billing(tienda)}/concepts/app/services/{TN_CLIENT_ID}/subscriptions'),
-        ('subs_sin_concepto', f'{tn_base_billing(tienda)}/services/{TN_CLIENT_ID}/subscriptions'),
-        ('plans', f'{tn_base_billing(tienda)}/plans'),
-        ('apps_plans', f'{tn_base_billing(tienda)}/apps/plans'),
-    ]
+    # Ruta arbitraria: ?path=/apps/36482/plans (relativa a la base 2025-03)
+    extra = request.args.get('path', '')
+    if extra:
+        rutas = [('custom', f'{tn_base_billing(tienda)}{extra}')]
+    else:
+        rutas = [
+            ('subs_app_cost', f'{tn_base_billing(tienda)}/concepts/app-cost/services/{TN_CLIENT_ID}/subscriptions'),
+            ('plans_con_app_id', f'{tn_base_billing(tienda)}/apps/{TN_CLIENT_ID}/plans'),
+        ]
     for nombre, url in rutas:
         try:
             r = req_lib.get(url, headers=tn_headers(tienda), timeout=20)
