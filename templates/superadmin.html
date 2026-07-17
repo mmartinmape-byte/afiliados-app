@@ -69,7 +69,12 @@ async function cargar() {
         <a href="${t.url}" target="_blank" style="font-size:.75rem">${(t.url || '').replace('https://', '')}</a>
         <span class="mono" style="color:var(--g400)"> · ${t.store_id}</span>
       </td>
-      <td><span class="badge ${t.plan === 'pro' ? 'b-pro' : 'b-free'}">${t.plan}</span></td>
+      <td>
+        <span class="badge ${t.plan === 'pro' ? 'b-pro' : 'b-free'}">${t.plan}</span><br>
+        <span style="font-size:.7rem;color:var(--g400)" title="${t.plan_manual ? 'Plan fijado a mano, la sincronización con TN no lo toca' : 'Sincronizado con la suscripción de Tienda Nube' + (t.tn_sub_chk ? ' · último chequeo ' + t.tn_sub_chk : '')}">
+          ${t.plan_manual ? '✋ manual' : '🔄 auto TN'}
+        </span>
+      </td>
       <td>${t.activa ? '🟢' : '<span class="badge b-off">desinstalada</span>'}</td>
       <td style="text-align:center">${t.influencers}</td>
       <td style="text-align:center">${t.ventas}</td>
@@ -78,13 +83,17 @@ async function cargar() {
         <button class="btn" onclick="cambiarPlan(${t.id}, '${t.plan === 'pro' ? 'free' : 'pro'}', '${(t.nombre || '').replace(/'/g, '')}')">
           ${t.plan === 'pro' ? 'Bajar a Free' : 'Subir a Pro ⭐'}
         </button>
+        ${t.plan_manual ? `<button class="btn" title="Volver a sincronizar el plan con la suscripción de Tienda Nube" onclick="cambiarPlan(${t.id}, 'auto', '${(t.nombre || '').replace(/'/g, '')}')">🔄 Auto</button>` : ''}
         <button class="btn" onclick="copiarAdmin('${t.clave_admin}')" title="Copiar el link de admin de esta tienda">🔑</button>
       </td>
     </tr>`).join('');
 }
 
 async function cambiarPlan(id, plan, nombre) {
-  if (!confirm(`¿Pasar "${nombre}" al plan ${plan.toUpperCase()}?`)) return;
+  const msg = plan === 'auto'
+    ? `¿Devolver "${nombre}" al plan automático según su suscripción de Tienda Nube?`
+    : `¿Pasar "${nombre}" al plan ${plan.toUpperCase()}? (queda fijado a mano)`;
+  if (!confirm(msg)) return;
   const r = await fetch(`/api/superadmin/tiendas/${id}/plan?clave=${CLAVE}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
