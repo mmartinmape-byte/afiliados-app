@@ -25,8 +25,12 @@ COMISION_DEFAULT = float(os.environ.get('COMISION_DEFAULT', '10'))
 # Ojo: paréntesis/espacios en el User-Agent disparan el WAF de Cloudflare de TN
 TN_UA            = 'ReferidosApp/1.0'
 PLAN_FREE_MAX_INFLUENCERS = 1
-# Cobro del plan Pro (Fase 3 MVP): link de suscripción de Mercado Pago.
-# Cuando TN habilite su Billing API, esto migra a cobro nativo del App Store.
+# Billing nativo de TN: el plan se sincroniza con la suscripción app-cost
+# (precio base + días de prueba definidos en el Partner Portal). Se consulta
+# como máximo una vez cada PLAN_SYNC_HORAS por tienda.
+PLAN_SYNC_HORAS  = 6
+# Cobro del plan Pro por link de Mercado Pago: queda como fallback manual
+# para tiendas fuera del billing nativo (activación vía superadmin).
 PRO_PRECIO_TXT   = os.environ.get('PRO_PRECIO_TXT', 'USD 12/mes')
 PRO_LINK_PAGO    = os.environ.get('PRO_LINK_PAGO', '')  # link de suscripción MP
 SOPORTE_EMAIL    = os.environ.get('SOPORTE_EMAIL', 'mmartinmape@gmail.com')
@@ -166,11 +170,39 @@ def _migrar_multitienda():
         print(f'  Aviso migración multi-tienda: {ex}')
 
 
+def _migrar_billing_nativo():
+    """Columnas para el billing nativo de TN (jul 2026). Idempotente.
+    Las tiendas que ya eran 'pro' quedan con plan_manual=1 para que la
+    sincronización automática no las pise (Cleantech y activaciones por MP)."""
+    try:
+        if IS_PG:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE tiendas ADD COLUMN IF NOT EXISTS plan_manual INTEGER NOT NULL DEFAULT 0"))
+                conn.execute(text("ALTER TABLE tiendas ADD COLUMN IF NOT EXISTS tn_sub_chk TEXT NOT NULL DEFAULT ''"))
+                conn.execute(text("ALTER TABLE tiendas ADD COLUMN IF NOT EXISTS tn_sub_info TEXT NOT NULL DEFAULT ''"))
+        else:
+            with engine.connect() as conn:
+                cols = [r[1] for r in conn.execute(text('PRAGMA table_info(tiendas)')).fetchall()]
+            faltantes = [c for c in ('plan_manual', 'tn_sub_chk', 'tn_sub_info') if c not in cols]
+            with engine.begin() as conn:
+                for c in faltantes:
+                    tipo = 'INTEGER NOT NULL DEFAULT 0' if c == 'plan_manual' else "TEXT NOT NULL DEFAULT ''"
+                    conn.execute(text(f'ALTER TABLE tiendas ADD COLUMN {c} {tipo}'))
+        with engine.begin() as conn:
+            n = conn.execute(text(
+                "UPDATE tiendas SET plan_manual=1 WHERE plan='pro' AND plan_manual=0 AND tn_sub_chk=''")).rowcount
+            if n:
+                print(f'  Migración: {n} tienda(s) pro marcadas como plan manual.')
+    except Exception as ex:
+        print(f'  Aviso migración billing nativo: {ex}')
+
+
 def _now():
     return datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
 _crear_esquema()
 _migrar_multitienda()
+_migrar_billing_nativo()
 
 
 @app.errorhandler(Exception)
@@ -227,6 +259,58 @@ def tn_base_billing(tienda):
     return f"https://api.tiendanube.com/2025-03/{tienda._mapping['store_id']}"
 
 
+def tn_suscripcion(tienda):
+    """Consulta la suscripción app-cost de la tienda en la Billing API de TN.
+    Devuelve (status_http, suscripción como dict o None)."""
+    url = f'{tn_base_billing(tienda)}/concepts/app-cost/services/{TN_CLIENT_ID}/subscriptions'
+    r = req_lib.get(url, headers=tn_headers(tienda), timeout=20)
+    if r.status_code != 200:
+        return r.status_code, None
+    try:
+        data = r.json()
+    except ValueError:
+        return r.status_code, None
+    # La forma exacta puede ser objeto único, lista o wrapper
+    if isinstance(data, dict) and isinstance(data.get('subscriptions'), list):
+        data = data['subscriptions']
+    if isinstance(data, list):
+        data = data[0] if data else None
+    return 200, data if isinstance(data, dict) else None
+
+
+def sincronizar_plan_tn(tienda, forzar=False):
+    """Alinea el plan con la suscripción nativa de TN: con suscripción app-cost
+    (incluye el período de prueba) la tienda es 'pro'; sin ella, 'free'.
+    No toca tiendas con plan_manual y ante errores de red/auth deja todo
+    como está. Devuelve la fila (refrescada si hubo cambios)."""
+    m = tienda._mapping
+    if m.get('plan_manual'):
+        return tienda
+    if not forzar and m.get('tn_sub_chk'):
+        try:
+            ultimo = datetime.strptime(m['tn_sub_chk'], '%Y-%m-%d %H:%M:%S')
+            if datetime.now() - ultimo < timedelta(hours=PLAN_SYNC_HORAS):
+                return tienda
+        except ValueError:
+            pass
+    try:
+        status, sub = tn_suscripcion(tienda)
+    except Exception as ex:
+        print(f"  Aviso: falló la consulta de suscripción TN de {m['store_id']} ({ex})")
+        return tienda
+    if status == 200 and sub:
+        plan, info = 'pro', json.dumps(sub)[:800]
+    elif status == 404 or (status == 200 and not sub):
+        plan, info = 'free', ''
+    else:
+        return tienda  # 401/403/5xx: no degradar el plan con datos dudosos
+    with engine.begin() as conn:
+        conn.execute(text(
+            'UPDATE tiendas SET plan=:p, tn_sub_chk=:c, tn_sub_info=:i WHERE id=:id'),
+            {'p': plan, 'c': _now(), 'i': info, 'id': m['id']})
+    return tienda_por_store_id(m['store_id'])
+
+
 @app.route('/entrar')
 def entrar():
     """Re-ingreso al admin: manda a autorizar en TN (instantáneo si la app ya
@@ -272,6 +356,7 @@ def tn_callback():
 
     tienda = _refrescar_datos_tienda(tienda)
     _registrar_webhook(tienda)
+    tienda = sincronizar_plan_tn(tienda, forzar=True)
     return redirect(f"/admin?clave={tienda._mapping['clave_admin']}&bienvenida=1")
 
 
@@ -727,7 +812,7 @@ def superadmin_tiendas():
     with engine.connect() as conn:
         rows = conn.execute(text('''
             SELECT t.id, t.store_id, t.nombre, t.url, t.email, t.plan, t.activa,
-                   t.clave_admin, t.creado,
+                   t.plan_manual, t.tn_sub_chk, t.clave_admin, t.creado,
                    (SELECT COUNT(*) FROM influencers i WHERE i.tienda_id = t.id) AS influencers,
                    (SELECT COUNT(*) FROM ventas v WHERE v.tienda_id = t.id) AS ventas
             FROM tiendas t ORDER BY t.id
@@ -740,10 +825,21 @@ def superadmin_cambiar_plan(tid):
     if not _es_superadmin():
         return jsonify({'error': 'No autorizado'}), 401
     plan = (request.json or {}).get('plan', '')
-    if plan not in ('free', 'pro'):
-        return jsonify({'error': 'Plan inválido (free|pro)'}), 400
+    if plan not in ('free', 'pro', 'auto'):
+        return jsonify({'error': 'Plan inválido (free|pro|auto)'}), 400
+    if plan == 'auto':
+        # Devuelve la tienda al control del billing nativo de TN
+        with engine.begin() as conn:
+            conn.execute(text(
+                "UPDATE tiendas SET plan_manual=0, tn_sub_chk='' WHERE id=:id"), {'id': tid})
+        with engine.connect() as conn:
+            row = conn.execute(text('SELECT * FROM tiendas WHERE id=:id'), {'id': tid}).fetchone()
+        if not row:
+            return jsonify({'error': 'Tienda inexistente'}), 404
+        row = sincronizar_plan_tn(row, forzar=True)
+        return jsonify({'ok': True, 'plan': row._mapping['plan']})
     with engine.begin() as conn:
-        conn.execute(text('UPDATE tiendas SET plan=:p WHERE id=:id'),
+        conn.execute(text('UPDATE tiendas SET plan=:p, plan_manual=1 WHERE id=:id'),
                      {'p': plan, 'id': tid})
     return jsonify({'ok': True})
 
@@ -797,6 +893,9 @@ def admin():
         return 'No autorizado. Ingresá con el link de admin de tu tienda.', 401
     if not (tienda._mapping['url'] or '').strip():
         tienda = _refrescar_datos_tienda(tienda)  # auto-reparación del dominio
+    # Recién instalada la suscripción puede tardar en aparecer: en la
+    # bienvenida se fuerza el chequeo; el resto respeta la caché de 6 hs
+    tienda = sincronizar_plan_tn(tienda, forzar=request.args.get('bienvenida') == '1')
     m = tienda._mapping
     return render_template('admin.html',
                            clave=m['clave_admin'],
